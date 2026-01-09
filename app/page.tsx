@@ -1,16 +1,28 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import {
+  supabase,
+  getAllMenu,
+  addMenu,
+  updateStok,
+  addTransaction,
+  getDailySales,
+  getMonthlySales,
+  type MenuItem,
+  type Transaction
+} from "@/lib/supabase";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid
+} from "recharts";
 
 type Category = "kopi" | "non-kopi" | "makanan";
-
-interface MenuItem {
-  id: number;
-  nama: string;
-  kategori: Category;
-  harga: number;
-  stok: number;
-}
 
 interface Receipt {
   nama: string;
@@ -20,9 +32,17 @@ interface Receipt {
   date: string;
 }
 
+interface TopSellingItem {
+  nama: string;
+  qty: number;
+  total: number;
+  kategori: string;
+}
+
 export default function Home() {
   const [menuData, setMenuData] = useState<MenuItem[]>([]);
-  const [activeTab, setActiveTab] = useState<"input" | "inventory" | "pos">("input");
+  const [activeTab, setActiveTab] = useState<"input" | "inventory" | "pos" | "omset">("input");
+  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     nama: "",
     kategori: "kopi" as Category,
@@ -30,33 +50,44 @@ export default function Home() {
     stok: "",
   });
   const [posSelection, setPosSelection] = useState({
-    index: "",
+    menuId: "",
     qty: 1,
   });
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [alert, setAlert] = useState<{ id: string; msg: string; type: "success" | "error" } | null>(null);
 
-  // Load from localStorage on mount
+  // Omset states
+  const [filterTanggal, setFilterTanggal] = useState(() => new Date().toISOString().slice(0, 10));
+  const [filterBulan, setFilterBulan] = useState(() => new Date().toISOString().slice(0, 7));
+  const [transaksiHariIni, setTransaksiHariIni] = useState<Transaction[]>([]);
+  const [transaksiBulanIni, setTransaksiBulanIni] = useState<Transaction[]>([]);
+  const [chartData, setChartData] = useState<{ tanggal: number; omset: number }[]>([]);
+  const [topSelling, setTopSelling] = useState<TopSellingItem[]>([]);
+
+  // Load data from Supabase on mount
   useEffect(() => {
-    const saved = localStorage.getItem("kopiData");
-    if (saved) {
-      setMenuData(JSON.parse(saved));
-    }
+    fetchMenuData();
   }, []);
 
-  // Save to localStorage whenever menuData changes
-  useEffect(() => {
-    if (menuData.length > 0 || localStorage.getItem("kopiData")) {
-      localStorage.setItem("kopiData", JSON.stringify(menuData));
+  const fetchMenuData = async () => {
+    try {
+      setLoading(true);
+      const data = await getAllMenu();
+      setMenuData(data);
+    } catch (error) {
+      console.error("Error fetching menu:", error);
+      showAlert("alert-input", "Gagal memuat data dari database", "error");
+    } finally {
+      setLoading(false);
     }
-  }, [menuData]);
+  };
 
   const showAlert = (id: string, msg: string, type: "success" | "error") => {
     setAlert({ id, msg, type });
     setTimeout(() => setAlert(null), 3000);
   };
 
-  const handleSimpanMenu = () => {
+  const handleSimpanMenu = async () => {
     const { nama, kategori, harga, stok } = formData;
     const h = parseInt(harga);
     const s = parseInt(stok);
@@ -66,52 +97,85 @@ export default function Home() {
       return;
     }
 
-    const newMenu: MenuItem = {
-      id: Date.now(),
-      nama,
-      kategori,
-      harga: h,
-      stok: s,
-    };
+    try {
+      setLoading(true);
+      await addMenu({
+        nama,
+        kategori,
+        harga: h,
+        stok: s,
+      });
 
-    setMenuData([...menuData, newMenu]);
-    setFormData({ nama: "", kategori: "kopi", harga: "", stok: "" });
-    showAlert("alert-input", "Menu berhasil ditambahkan!", "success");
+      // Refresh data from Supabase
+      await fetchMenuData();
+
+      setFormData({ nama: "", kategori: "kopi", harga: "", stok: "" });
+      showAlert("alert-input", "Menu berhasil ditambahkan!", "success");
+    } catch (error) {
+      console.error("Error adding menu:", error);
+      showAlert("alert-input", "Gagal menyimpan menu ke database", "error");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleProsesTransaksi = () => {
-    const { index, qty } = posSelection;
-    const idx = parseInt(index);
+  const handleProsesTransaksi = async () => {
+    const { menuId, qty } = posSelection;
 
-    if (index === "" || isNaN(qty) || qty <= 0) {
+    if (menuId === "" || isNaN(qty) || qty <= 0) {
       showAlert("alert-pos", "Pilih menu dan masukkan jumlah yang valid!", "error");
       return;
     }
 
-    const item = menuData[idx];
+    const item = menuData.find(m => m.id?.toString() === menuId);
+
+    if (!item || !item.id) {
+      showAlert("alert-pos", "Menu tidak ditemukan!", "error");
+      return;
+    }
 
     if (qty > item.stok) {
       showAlert("alert-pos", `Gagal! Stok ${item.nama} tidak mencukupi (Tersisa: ${item.stok})`, "error");
       return;
     }
 
-    const updatedMenu = [...menuData];
-    updatedMenu[idx].stok -= qty;
-    setMenuData(updatedMenu);
+    try {
+      setLoading(true);
 
-    const totalHarga = item.harga * qty;
-    setReceipt({
-      nama: item.nama,
-      qty,
-      harga: item.harga,
-      total: totalHarga,
-      date: new Date().toLocaleString("id-ID"),
-    });
+      // Update stok di Supabase
+      await updateStok(item.id, qty);
 
-    showAlert("alert-pos", "Transaksi Berhasil!", "success");
+      // Catat transaksi di Supabase
+      await addTransaction({
+        menu_id: item.id,
+        menu_nama: item.nama,
+        qty: qty,
+        harga_satuan: item.harga,
+        total_harga: qty * item.harga
+      });
+
+      // Refresh data
+      await fetchMenuData();
+
+      const totalHarga = item.harga * qty;
+      setReceipt({
+        nama: item.nama,
+        qty,
+        harga: item.harga,
+        total: totalHarga,
+        date: new Date().toLocaleString("id-ID"),
+      });
+
+      showAlert("alert-pos", "Transaksi Berhasil!", "success");
+    } catch (error) {
+      console.error("Error processing transaction:", error);
+      showAlert("alert-pos", "Gagal memproses transaksi", "error");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const getBadgeClass = (kategori: Category) => {
+  const getBadgeClass = (kategori: string) => {
     switch (kategori) {
       case "kopi": return "bg-[#5d4037] text-white";
       case "non-kopi": return "bg-[#43a047] text-white";
@@ -120,12 +184,75 @@ export default function Home() {
     }
   };
 
+  // ========================================
+  // OMSET DASHBOARD FUNCTIONS
+  // ========================================
+  const fetchOmsetData = async () => {
+    try {
+      setLoading(true);
+
+      // Fetch daily transactions
+      const hariIni = await getDailySales(filterTanggal);
+      setTransaksiHariIni(hariIni);
+
+      // Fetch monthly transactions
+      const bulanIni = await getMonthlySales(filterBulan);
+      setTransaksiBulanIni(bulanIni);
+
+      // Prepare chart data
+      const [year, month] = filterBulan.split('-').map(Number);
+      const daysInMonth = new Date(year, month, 0).getDate();
+      const dailyData: { tanggal: number; omset: number }[] = [];
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${filterBulan}-${String(day).padStart(2, '0')}`;
+        const omsetHari = bulanIni
+          .filter(t => t.tanggal?.slice(0, 10) === dateStr)
+          .reduce((sum, t) => sum + t.total_harga, 0);
+        dailyData.push({ tanggal: day, omset: omsetHari });
+      }
+      setChartData(dailyData);
+
+      // Calculate top selling
+      const menuSales: Record<string, TopSellingItem> = {};
+      bulanIni.forEach(t => {
+        if (!menuSales[t.menu_nama]) {
+          menuSales[t.menu_nama] = { nama: t.menu_nama, qty: 0, total: 0, kategori: '' };
+        }
+        menuSales[t.menu_nama].qty += t.qty;
+        menuSales[t.menu_nama].total += t.total_harga;
+      });
+
+      const sorted = Object.values(menuSales)
+        .sort((a, b) => b.qty - a.qty)
+        .slice(0, 5);
+      setTopSelling(sorted);
+
+    } catch (error) {
+      console.error("Error fetching omset data:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const omsetHari = transaksiHariIni.reduce((sum, t) => sum + t.total_harga, 0);
+  const omsetBulan = transaksiBulanIni.reduce((sum, t) => sum + t.total_harga, 0);
+  const totalTransaksi = transaksiHariIni.length;
+  const totalItem = transaksiHariIni.reduce((sum, t) => sum + t.qty, 0);
+
   return (
     <div className="min-h-screen bg-[#FED8B1] p-5 font-sans text-[#3C2A21]">
-      <div className="mx-auto max-w-[1000px] rounded-[15px] bg-white p-[30px] shadow-[0_10px_25px_rgba(0,0,0,0.1)]">
-        <h1 className="mb-6 text-center text-3xl font-bold text-[#6F4E37]">☕ Kopi Jaya Management</h1>
+      <div className="mx-auto max-w-[1100px] rounded-[15px] bg-white p-[30px] shadow-[0_10px_25px_rgba(0,0,0,0.1)]">
+        <h1 className="mb-6 text-center text-3xl font-bold text-[#6F4E37]">☕ Kedai Cak Yusop</h1>
 
-        <div className="mb-[30px] flex justify-center gap-2.5 border-b-2 border-[#ECB176] pb-2.5">
+        {/* Loading Indicator */}
+        {loading && (
+          <div className="mb-4 text-center text-[#6F4E37]">
+            <span className="animate-pulse">⏳ Memproses...</span>
+          </div>
+        )}
+
+        <div className="mb-[30px] flex flex-wrap justify-center gap-2.5 border-b-2 border-[#ECB176] pb-2.5">
           <button
             className={`cursor-pointer px-5 py-2.5 text-lg font-bold transition-all duration-300 ${activeTab === "input" ? "border-b-4 border-[#6F4E37] text-[#6F4E37]" : "text-[#A67B5B]"
               }`}
@@ -136,16 +263,23 @@ export default function Home() {
           <button
             className={`cursor-pointer px-5 py-2.5 text-lg font-bold transition-all duration-300 ${activeTab === "inventory" ? "border-b-4 border-[#6F4E37] text-[#6F4E37]" : "text-[#A67B5B]"
               }`}
-            onClick={() => setActiveTab("inventory")}
+            onClick={() => { setActiveTab("inventory"); fetchMenuData(); }}
           >
             Daftar Stok
           </button>
           <button
             className={`cursor-pointer px-5 py-2.5 text-lg font-bold transition-all duration-300 ${activeTab === "pos" ? "border-b-4 border-[#6F4E37] text-[#6F4E37]" : "text-[#A67B5B]"
               }`}
-            onClick={() => setActiveTab("pos")}
+            onClick={() => { setActiveTab("pos"); fetchMenuData(); }}
           >
             Transaksi POS
+          </button>
+          <button
+            className={`cursor-pointer px-5 py-2.5 text-lg font-bold transition-all duration-300 ${activeTab === "omset" ? "border-b-4 border-[#6F4E37] text-[#6F4E37]" : "text-[#A67B5B]"
+              }`}
+            onClick={() => { setActiveTab("omset"); fetchOmsetData(); }}
+          >
+            📊 Omset
           </button>
         </div>
 
@@ -202,10 +336,11 @@ export default function Home() {
                 />
               </div>
               <button
-                className="w-full rounded bg-[#6F4E37] p-3 text-lg text-white transition-colors hover:bg-[#3C2A21]"
+                className="w-full rounded bg-[#6F4E37] p-3 text-lg text-white transition-colors hover:bg-[#3C2A21] disabled:opacity-50"
                 onClick={handleSimpanMenu}
+                disabled={loading}
               >
-                Simpan Menu
+                {loading ? "Menyimpan..." : "Simpan Menu"}
               </button>
             </div>
           </div>
@@ -242,7 +377,9 @@ export default function Home() {
                   ))}
                   {menuData.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="p-3 text-center text-gray-500 italic">Belum ada menu.</td>
+                      <td colSpan={4} className="p-3 text-center text-gray-500 italic">
+                        {loading ? "Memuat data..." : "Belum ada menu."}
+                      </td>
                     </tr>
                   )}
                 </tbody>
@@ -265,12 +402,12 @@ export default function Home() {
                 <label className="mb-1.5 block font-bold">Pilih Menu</label>
                 <select
                   className="w-full rounded border border-gray-300 p-2.5"
-                  value={posSelection.index}
-                  onChange={(e) => setPosSelection({ ...posSelection, index: e.target.value })}
+                  value={posSelection.menuId}
+                  onChange={(e) => setPosSelection({ ...posSelection, menuId: e.target.value })}
                 >
                   <option value="">-- Pilih Menu --</option>
-                  {menuData.map((item, index) => (
-                    <option key={item.id} value={index}>
+                  {menuData.map((item) => (
+                    <option key={item.id} value={item.id?.toString()}>
                       {item.nama} (Stok: {item.stok})
                     </option>
                   ))}
@@ -287,10 +424,11 @@ export default function Home() {
                 />
               </div>
               <button
-                className="w-full rounded bg-[#6F4E37] p-3 text-lg text-white transition-colors hover:bg-[#3C2A21]"
+                className="w-full rounded bg-[#6F4E37] p-3 text-lg text-white transition-colors hover:bg-[#3C2A21] disabled:opacity-50"
                 onClick={handleProsesTransaksi}
+                disabled={loading}
               >
-                Proses Transaksi
+                {loading ? "Memproses..." : "Proses Transaksi"}
               </button>
             </div>
 
@@ -312,6 +450,152 @@ export default function Home() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Section 4: Omset Dashboard */}
+        {activeTab === "omset" && (
+          <div className="animate-fadeIn">
+            <h2 className="mb-4 text-center text-2xl font-semibold text-[#6F4E37]">📊 Dashboard Omset</h2>
+
+            {/* Filter */}
+            <div className="mb-5 flex flex-wrap items-end gap-4">
+              <div className="min-w-[150px] flex-1">
+                <label className="mb-1.5 block font-bold">Pilih Bulan</label>
+                <input
+                  type="month"
+                  className="w-full rounded border border-gray-300 p-2.5"
+                  value={filterBulan}
+                  onChange={(e) => setFilterBulan(e.target.value)}
+                />
+              </div>
+              <div className="min-w-[150px] flex-1">
+                <label className="mb-1.5 block font-bold">Pilih Tanggal</label>
+                <input
+                  type="date"
+                  className="w-full rounded border border-gray-300 p-2.5"
+                  value={filterTanggal}
+                  onChange={(e) => setFilterTanggal(e.target.value)}
+                />
+              </div>
+              <button
+                className="rounded bg-[#6F4E37] px-5 py-2.5 text-white transition-colors hover:bg-[#3C2A21]"
+                onClick={fetchOmsetData}
+              >
+                🔄 Refresh
+              </button>
+            </div>
+
+            {/* Stats Cards */}
+            <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl bg-gradient-to-br from-[#6F4E37] to-[#A67B5B] p-5 text-center text-white shadow-lg">
+                <h4 className="mb-2 text-sm opacity-90">💰 Omset Hari Ini</h4>
+                <div className="text-2xl font-bold">Rp. {omsetHari.toLocaleString()}</div>
+              </div>
+              <div className="rounded-xl bg-gradient-to-br from-[#43a047] to-[#66bb6a] p-5 text-center text-white shadow-lg">
+                <h4 className="mb-2 text-sm opacity-90">📅 Omset Bulan Ini</h4>
+                <div className="text-2xl font-bold">Rp. {omsetBulan.toLocaleString()}</div>
+              </div>
+              <div className="rounded-xl bg-gradient-to-br from-[#ff9800] to-[#ffb74d] p-5 text-center text-white shadow-lg">
+                <h4 className="mb-2 text-sm opacity-90">🛒 Total Transaksi</h4>
+                <div className="text-2xl font-bold">{totalTransaksi}</div>
+              </div>
+              <div className="rounded-xl bg-gradient-to-br from-[#1976d2] to-[#42a5f5] p-5 text-center text-white shadow-lg">
+                <h4 className="mb-2 text-sm opacity-90">📦 Item Terjual</h4>
+                <div className="text-2xl font-bold">{totalItem}</div>
+              </div>
+            </div>
+
+            {/* Two Column Layout */}
+            <div className="mb-6 grid gap-5 lg:grid-cols-2">
+              {/* Chart */}
+              <div className="rounded-xl bg-[#fafafa] p-5">
+                <h3 className="mb-4 border-b-2 border-[#ECB176] pb-2 text-center text-lg font-semibold text-[#6F4E37]">
+                  📈 Grafik Omset Harian (Bulan Ini)
+                </h3>
+                <div className="h-[250px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="tanggal" label={{ value: 'Tanggal', position: 'bottom', offset: -5 }} />
+                      <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} />
+                      <Tooltip
+                        formatter={(value: number) => [`Rp. ${value.toLocaleString()}`, 'Omset']}
+                        labelFormatter={(label) => `Tanggal ${label}`}
+                      />
+                      <Bar dataKey="omset" fill="#6F4E37" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Top Selling */}
+              <div className="rounded-xl bg-[#fafafa] p-5">
+                <h3 className="mb-4 border-b-2 border-[#ECB176] pb-2 text-center text-lg font-semibold text-[#6F4E37]">
+                  🏆 Menu Paling Laku
+                </h3>
+                <div className="space-y-3">
+                  {topSelling.length === 0 ? (
+                    <p className="text-center text-gray-500">Belum ada data penjualan</p>
+                  ) : (
+                    topSelling.map((item, index) => (
+                      <div
+                        key={item.nama}
+                        className="flex items-center justify-between rounded-lg border-l-4 border-[#6F4E37] bg-[#f5f5f5] p-4"
+                      >
+                        <div className="text-2xl font-bold text-[#6F4E37]">#{index + 1}</div>
+                        <div className="flex-1 px-4">
+                          <h4 className="font-semibold text-[#3C2A21]">{item.nama}</h4>
+                          <small className="text-gray-500">Total: Rp. {item.total.toLocaleString()}</small>
+                        </div>
+                        <div className="text-lg font-bold text-[#4CAF50]">{item.qty} terjual</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Transaction History */}
+            <div className="rounded-xl bg-[#fafafa] p-5">
+              <h3 className="mb-4 border-b-2 border-[#ECB176] pb-2 text-center text-lg font-semibold text-[#6F4E37]">
+                📋 Riwayat Transaksi Hari Ini
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-[#A67B5B] text-white">
+                      <th className="border border-gray-300 p-3 text-left">Waktu</th>
+                      <th className="border border-gray-300 p-3 text-left">Menu</th>
+                      <th className="border border-gray-300 p-3 text-left">Qty</th>
+                      <th className="border border-gray-300 p-3 text-left">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {transaksiHariIni.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="p-3 text-center text-gray-500">
+                          Belum ada transaksi hari ini
+                        </td>
+                      </tr>
+                    ) : (
+                      [...transaksiHariIni]
+                        .sort((a, b) => new Date(b.tanggal || '').getTime() - new Date(a.tanggal || '').getTime())
+                        .map((t) => (
+                          <tr key={t.id} className="border-b border-gray-300">
+                            <td className="p-3">
+                              {t.tanggal ? new Date(t.tanggal).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-'}
+                            </td>
+                            <td className="p-3">{t.menu_nama}</td>
+                            <td className="p-3">{t.qty}</td>
+                            <td className="p-3">Rp. {t.total_harga.toLocaleString()}</td>
+                          </tr>
+                        ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
       </div>
