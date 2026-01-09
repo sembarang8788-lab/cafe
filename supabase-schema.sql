@@ -1,69 +1,84 @@
--- ========================================
--- SUPABASE SQL SCHEMA
--- ========================================
--- Jalankan SQL ini di Supabase SQL Editor:
--- 1. Buka dashboard Supabase
--- 2. Pilih project Anda
--- 3. Klik "SQL Editor" di sidebar
--- 4. Klik "New Query"
--- 5. Paste dan jalankan SQL di bawah ini
--- ========================================
+-- =============================================
+-- SCHEMA LENGKAP UNTUK APLIKASI CAFE POS
+-- Jalankan seluruh SQL ini di Supabase SQL Editor
+-- =============================================
 
--- Tabel Menu
-CREATE TABLE IF NOT EXISTS menu (
-  id BIGSERIAL PRIMARY KEY,
-  nama VARCHAR(255) NOT NULL,
-  kategori VARCHAR(50) NOT NULL CHECK (kategori IN ('kopi', 'non-kopi', 'makanan')),
-  harga INTEGER NOT NULL,
-  stok INTEGER NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+-- 1. Tabel Produk (Menu)
+CREATE TABLE IF NOT EXISTS products (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  name text NOT NULL,
+  price numeric NOT NULL,
+  stock integer DEFAULT 0 CHECK (stock >= 0),
+  image_url text,
+  created_at timestamptz DEFAULT now()
 );
 
--- Tabel Transaksi
-CREATE TABLE IF NOT EXISTS transactions (
-  id BIGSERIAL PRIMARY KEY,
-  menu_id BIGINT REFERENCES menu(id) ON DELETE SET NULL,
-  menu_nama VARCHAR(255) NOT NULL,
-  qty INTEGER NOT NULL,
-  harga_satuan INTEGER NOT NULL,
-  total_harga INTEGER NOT NULL,
-  tanggal TIMESTAMPTZ DEFAULT NOW()
+-- 2. Tabel Pesanan (Header)
+CREATE TABLE IF NOT EXISTS orders (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  total_amount numeric DEFAULT 0,
+  status text DEFAULT 'pending',
+  created_at timestamptz DEFAULT now()
 );
 
--- Enable Row Level Security
-ALTER TABLE menu ENABLE ROW LEVEL SECURITY;
-ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
+-- 3. Tabel Detail Pesanan
+CREATE TABLE IF NOT EXISTS order_items (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  order_id uuid REFERENCES orders(id) ON DELETE CASCADE,
+  product_id uuid REFERENCES products(id) ON DELETE SET NULL,
+  quantity integer NOT NULL CHECK (quantity > 0),
+  unit_price numeric NOT NULL
+);
 
--- Policy untuk akses publik (sesuaikan dengan kebutuhan keamanan Anda)
-CREATE POLICY "Allow public read access on menu" ON menu
-  FOR SELECT USING (true);
+-- 4. Function untuk membuat order dan mengurangi stok
+CREATE OR REPLACE FUNCTION create_order_and_reduce_stock(
+  p_user_id uuid,
+  p_items jsonb,
+  p_total numeric
+) RETURNS uuid AS $$
+DECLARE
+  v_order_id uuid;
+  v_item jsonb;
+BEGIN
+  INSERT INTO orders (user_id, total_amount, status)
+  VALUES (p_user_id, p_total, 'completed')
+  RETURNING id INTO v_order_id;
 
-CREATE POLICY "Allow public insert on menu" ON menu
-  FOR INSERT WITH CHECK (true);
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+  LOOP
+    INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+    VALUES (
+      v_order_id, 
+      (v_item->>'product_id')::uuid, 
+      (v_item->>'quantity')::int, 
+      (v_item->>'price')::numeric
+    );
 
-CREATE POLICY "Allow public update on menu" ON menu
-  FOR UPDATE USING (true);
+    UPDATE products 
+    SET stock = stock - (v_item->>'quantity')::int
+    WHERE id = (v_item->>'product_id')::uuid;
+  END LOOP;
 
-CREATE POLICY "Allow public delete on menu" ON menu
-  FOR DELETE USING (true);
+  RETURN v_order_id;
+END;
+$$ LANGUAGE plpgsql;
 
-CREATE POLICY "Allow public read access on transactions" ON transactions
-  FOR SELECT USING (true);
+-- 5. Row Level Security (Hapus dulu jika ada, baru buat ulang)
+ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_items ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Allow public insert on transactions" ON transactions
-  FOR INSERT WITH CHECK (true);
+DROP POLICY IF EXISTS "Products are viewable by everyone" ON products;
+DROP POLICY IF EXISTS "Products are editable by everyone" ON products;
+DROP POLICY IF EXISTS "Orders are viewable by everyone" ON orders;
+DROP POLICY IF EXISTS "Orders can be created by everyone" ON orders;
+DROP POLICY IF EXISTS "Order items are viewable by everyone" ON order_items;
+DROP POLICY IF EXISTS "Order items can be created by everyone" ON order_items;
 
--- ========================================
--- SAMPLE DATA (Opsional)
--- ========================================
--- INSERT INTO menu (nama, kategori, harga, stok) VALUES
---   ('Espresso', 'kopi', 18000, 50),
---   ('Cappuccino', 'kopi', 25000, 40),
---   ('Latte', 'kopi', 28000, 35),
---   ('Americano', 'kopi', 20000, 45),
---   ('Matcha Latte', 'non-kopi', 28000, 30),
---   ('Chocolate', 'non-kopi', 22000, 25),
---   ('Lemon Tea', 'non-kopi', 15000, 40),
---   ('Croissant', 'makanan', 25000, 20),
---   ('Sandwich', 'makanan', 35000, 15),
---   ('Cake Slice', 'makanan', 30000, 10);
+CREATE POLICY "Products are viewable by everyone" ON products FOR SELECT USING (true);
+CREATE POLICY "Products are editable by everyone" ON products FOR ALL USING (true);
+CREATE POLICY "Orders are viewable by everyone" ON orders FOR SELECT USING (true);
+CREATE POLICY "Orders can be created by everyone" ON orders FOR INSERT WITH CHECK (true);
+CREATE POLICY "Order items are viewable by everyone" ON order_items FOR SELECT USING (true);
+CREATE POLICY "Order items can be created by everyone" ON order_items FOR INSERT WITH CHECK (true);
