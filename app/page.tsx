@@ -1,604 +1,625 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   supabase,
-  getAllMenu,
-  addMenu,
-  updateStok,
-  addTransaction,
-  getDailySales,
-  getMonthlySales,
-  type MenuItem,
-  type Transaction
+  getProducts,
+  addProduct,
+  deleteProduct,
+  getOrders,
+  createOrderAndReduceStock,
+  formatCurrency,
+  type Product,
+  type Order,
+  type CartItem,
+  type OrderItem,
 } from "@/lib/supabase";
 import {
-  BarChart,
-  Bar,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  CartesianGrid
+  CartesianGrid,
+  Area,
+  AreaChart,
 } from "recharts";
 
-type Category = "kopi" | "non-kopi" | "makanan";
-
-interface Receipt {
-  nama: string;
-  qty: number;
-  harga: number;
-  total: number;
-  date: string;
-}
-
-interface TopSellingItem {
-  nama: string;
-  qty: number;
-  total: number;
-  kategori: string;
-}
+type ViewType = "pos" | "inventory" | "report";
 
 export default function Home() {
-  const [menuData, setMenuData] = useState<MenuItem[]>([]);
-  const [activeTab, setActiveTab] = useState<"input" | "inventory" | "pos" | "omset">("input");
+  const [activeView, setActiveView] = useState<ViewType>("pos");
+  const [products, setProducts] = useState<Product[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [cart, setCart] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [dbStatus, setDbStatus] = useState<"online" | "offline">("online");
+
+  // Modal state
+  const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState({
-    nama: "",
-    kategori: "kopi" as Category,
-    harga: "",
-    stok: "",
+    name: "",
+    price: "",
+    stock: "",
+    image_url: "",
   });
-  const [posSelection, setPosSelection] = useState({
-    menuId: "",
-    qty: 1,
-  });
-  const [receipt, setReceipt] = useState<Receipt | null>(null);
-  const [alert, setAlert] = useState<{ id: string; msg: string; type: "success" | "error" } | null>(null);
 
-  // Omset states
-  const [filterTanggal, setFilterTanggal] = useState(() => new Date().toISOString().slice(0, 10));
-  const [filterBulan, setFilterBulan] = useState(() => new Date().toISOString().slice(0, 7));
-  const [transaksiHariIni, setTransaksiHariIni] = useState<Transaction[]>([]);
-  const [transaksiBulanIni, setTransaksiBulanIni] = useState<Transaction[]>([]);
-  const [chartData, setChartData] = useState<{ tanggal: number; omset: number }[]>([]);
-  const [topSelling, setTopSelling] = useState<TopSellingItem[]>([]);
+  // Chart data
+  const [chartData, setChartData] = useState<{ day: string; revenue: number }[]>([]);
 
-  // Load data from Supabase on mount
+  // Load data on mount
   useEffect(() => {
-    fetchMenuData();
+    refreshData();
   }, []);
 
-  const fetchMenuData = async () => {
+  const refreshData = async () => {
     try {
       setLoading(true);
-      const data = await getAllMenu();
-      setMenuData(data);
-    } catch (error) {
-      console.error("Error fetching menu:", error);
-      showAlert("alert-input", "Gagal memuat data dari database", "error");
+      const [productsData, ordersData] = await Promise.all([
+        getProducts(),
+        getOrders(),
+      ]);
+      setProducts(productsData);
+      setOrders(ordersData);
+      updateStats(ordersData);
+      setDbStatus("online");
+    } catch (err) {
+      console.error("DB Error:", err);
+      setDbStatus("offline");
     } finally {
       setLoading(false);
     }
   };
 
-  const showAlert = (id: string, msg: string, type: "success" | "error") => {
-    setAlert({ id, msg, type });
-    setTimeout(() => setAlert(null), 3000);
+  const updateStats = (ordersData: Order[]) => {
+    const labels: string[] = [];
+    const data: number[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().slice(0, 10);
+      labels.push(d.toLocaleDateString("id-ID", { weekday: "short" }));
+      const sum = ordersData
+        .filter((o) => o.created_at && o.created_at.startsWith(dateStr))
+        .reduce((s, o) => s + Number(o.total_amount || 0), 0);
+      data.push(sum);
+    }
+    setChartData(labels.map((day, i) => ({ day, revenue: data[i] })));
   };
 
-  const handleSimpanMenu = async () => {
-    const { nama, kategori, harga, stok } = formData;
-    const h = parseInt(harga);
-    const s = parseInt(stok);
-
-    if (!nama || isNaN(h) || isNaN(s)) {
-      showAlert("alert-input", "Lengkapi semua data dengan benar!", "error");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      await addMenu({
-        nama,
-        kategori,
-        harga: h,
-        stok: s,
-      });
-
-      // Refresh data from Supabase
-      await fetchMenuData();
-
-      setFormData({ nama: "", kategori: "kopi", harga: "", stok: "" });
-      showAlert("alert-input", "Menu berhasil ditambahkan!", "success");
-    } catch (error) {
-      console.error("Error adding menu:", error);
-      showAlert("alert-input", "Gagal menyimpan menu ke database", "error");
-    } finally {
-      setLoading(false);
+  // Navigation
+  const nav = (target: ViewType) => {
+    setActiveView(target);
+    if (target === "inventory" || target === "report") {
+      refreshData();
     }
   };
 
-  const handleProsesTransaksi = async () => {
-    const { menuId, qty } = posSelection;
+  // Cart functions
+  const addToCart = (id: string) => {
+    const product = products.find((p) => p.id === id);
+    if (!product || product.stock <= 0) return;
 
-    if (menuId === "" || isNaN(qty) || qty <= 0) {
-      showAlert("alert-pos", "Pilih menu dan masukkan jumlah yang valid!", "error");
-      return;
-    }
-
-    const item = menuData.find(m => m.id?.toString() === menuId);
-
-    if (!item || !item.id) {
-      showAlert("alert-pos", "Menu tidak ditemukan!", "error");
-      return;
-    }
-
-    if (qty > item.stok) {
-      showAlert("alert-pos", `Gagal! Stok ${item.nama} tidak mencukupi (Tersisa: ${item.stok})`, "error");
-      return;
-    }
-
-    try {
-      setLoading(true);
-
-      // Update stok di Supabase
-      await updateStok(item.id, qty);
-
-      // Catat transaksi di Supabase
-      await addTransaction({
-        menu_id: item.id,
-        menu_nama: item.nama,
-        qty: qty,
-        harga_satuan: item.harga,
-        total_harga: qty * item.harga
-      });
-
-      // Refresh data
-      await fetchMenuData();
-
-      const totalHarga = item.harga * qty;
-      setReceipt({
-        nama: item.nama,
-        qty,
-        harga: item.harga,
-        total: totalHarga,
-        date: new Date().toLocaleString("id-ID"),
-      });
-
-      showAlert("alert-pos", "Transaksi Berhasil!", "success");
-    } catch (error) {
-      console.error("Error processing transaction:", error);
-      showAlert("alert-pos", "Gagal memproses transaksi", "error");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getBadgeClass = (kategori: string) => {
-    switch (kategori) {
-      case "kopi": return "bg-[#5d4037] text-white";
-      case "non-kopi": return "bg-[#43a047] text-white";
-      case "makanan": return "bg-[#fbc02d] text-black";
-      default: return "bg-gray-500 text-white";
-    }
-  };
-
-  // ========================================
-  // OMSET DASHBOARD FUNCTIONS
-  // ========================================
-  const fetchOmsetData = async () => {
-    try {
-      setLoading(true);
-
-      // Fetch daily transactions
-      const hariIni = await getDailySales(filterTanggal);
-      setTransaksiHariIni(hariIni);
-
-      // Fetch monthly transactions
-      const bulanIni = await getMonthlySales(filterBulan);
-      setTransaksiBulanIni(bulanIni);
-
-      // Prepare chart data
-      const [year, month] = filterBulan.split('-').map(Number);
-      const daysInMonth = new Date(year, month, 0).getDate();
-      const dailyData: { tanggal: number; omset: number }[] = [];
-
-      for (let day = 1; day <= daysInMonth; day++) {
-        const dateStr = `${filterBulan}-${String(day).padStart(2, '0')}`;
-        const omsetHari = bulanIni
-          .filter(t => t.tanggal?.slice(0, 10) === dateStr)
-          .reduce((sum, t) => sum + t.total_harga, 0);
-        dailyData.push({ tanggal: day, omset: omsetHari });
+    setCart((prev) => {
+      const existing = prev.find((c) => c.id === id);
+      if (existing) {
+        if (existing.qty >= product.stock) return prev;
+        return prev.map((c) => (c.id === id ? { ...c, qty: c.qty + 1 } : c));
       }
-      setChartData(dailyData);
+      return [...prev, { ...product, qty: 1 }];
+    });
+  };
 
-      // Calculate top selling
-      const menuSales: Record<string, TopSellingItem> = {};
-      bulanIni.forEach(t => {
-        if (!menuSales[t.menu_nama]) {
-          menuSales[t.menu_nama] = { nama: t.menu_nama, qty: 0, total: 0, kategori: '' };
-        }
-        menuSales[t.menu_nama].qty += t.qty;
-        menuSales[t.menu_nama].total += t.total_harga;
-      });
+  const updateQty = (id: string, delta: number) => {
+    const product = products.find((p) => p.id === id);
+    setCart((prev) => {
+      return prev
+        .map((item) => {
+          if (item.id === id) {
+            let newQty = item.qty + delta;
+            if (product && newQty > product.stock) newQty = product.stock;
+            return { ...item, qty: newQty };
+          }
+          return item;
+        })
+        .filter((item) => item.qty > 0);
+    });
+  };
 
-      const sorted = Object.values(menuSales)
-        .sort((a, b) => b.qty - a.qty)
-        .slice(0, 5);
-      setTopSelling(sorted);
+  const clearCart = () => setCart([]);
 
-    } catch (error) {
-      console.error("Error fetching omset data:", error);
+  const cartTotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
+
+  const checkout = async () => {
+    if (cart.length === 0) return;
+
+    try {
+      setLoading(true);
+      const items: OrderItem[] = cart.map((item) => ({
+        product_id: item.id,
+        quantity: item.qty,
+        price: item.price,
+      }));
+
+      await createOrderAndReduceStock(items, cartTotal);
+      setCart([]);
+      await refreshData();
+      alert("Transaction Completed Successfully!");
+    } catch (err: unknown) {
+      alert("Error: " + (err instanceof Error ? err.message : "Unknown error"));
     } finally {
       setLoading(false);
     }
   };
 
-  const omsetHari = transaksiHariIni.reduce((sum, t) => sum + t.total_harga, 0);
-  const omsetBulan = transaksiBulanIni.reduce((sum, t) => sum + t.total_harga, 0);
-  const totalTransaksi = transaksiHariIni.length;
-  const totalItem = transaksiHariIni.reduce((sum, t) => sum + t.qty, 0);
+  // Inventory functions
+  const handleSaveMenu = async () => {
+    const { name, price, stock, image_url } = formData;
+    const p = parseFloat(price);
+    const s = parseInt(stock);
+
+    if (!name || isNaN(p)) {
+      alert("Fill required fields!");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await addProduct({
+        name,
+        price: p,
+        stock: s || 0,
+        image_url: image_url || null,
+      });
+      setFormData({ name: "", price: "", stock: "", image_url: "" });
+      setShowModal(false);
+      await refreshData();
+    } catch (err: unknown) {
+      alert("Error: " + (err instanceof Error ? err.message : "Unknown error"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteMenu = async (id: string) => {
+    if (confirm("Permanently delete this item?")) {
+      try {
+        await deleteProduct(id);
+        await refreshData();
+      } catch (err: unknown) {
+        alert("Error: " + (err instanceof Error ? err.message : "Unknown error"));
+      }
+    }
+  };
+
+  // Stats calculations
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayOrders = orders.filter((o) => o.created_at?.startsWith(todayStr));
+  const dailyRevenue = todayOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+  const monthlyRevenue = orders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
 
   return (
-    <div className="min-h-screen bg-[#FED8B1] p-5 font-sans text-[#3C2A21]">
-      <div className="mx-auto max-w-[1100px] rounded-[15px] bg-white p-[30px] shadow-[0_10px_25px_rgba(0,0,0,0.1)]">
-        <h1 className="mb-6 text-center text-3xl font-bold text-[#6F4E37]">☕ Kedai Cak Yusop</h1>
-
-        {/* Loading Indicator */}
-        {loading && (
-          <div className="mb-4 text-center text-[#6F4E37]">
-            <span className="animate-pulse">⏳ Memproses...</span>
+    <div className="flex h-screen overflow-hidden">
+      {/* Sidebar */}
+      <aside className="w-72 bg-white border-r border-gray-100 flex flex-col z-20">
+        <div className="p-8">
+          <h1 className="text-2xl font-extrabold text-[#4A3728] tracking-tight flex items-center gap-3">
+            <span className="p-2 bg-[#4A3728] text-white rounded-lg shadow-inner">☕</span>
+            Cak Yusop
+          </h1>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
+            <span className="text-[10px] font-bold tracking-widest text-gray-400 uppercase">
+              Premium Management
+            </span>
           </div>
-        )}
-
-        <div className="mb-[30px] flex flex-wrap justify-center gap-2.5 border-b-2 border-[#ECB176] pb-2.5">
-          <button
-            className={`cursor-pointer px-5 py-2.5 text-lg font-bold transition-all duration-300 ${activeTab === "input" ? "border-b-4 border-[#6F4E37] text-[#6F4E37]" : "text-[#A67B5B]"
-              }`}
-            onClick={() => setActiveTab("input")}
-          >
-            Input Menu
-          </button>
-          <button
-            className={`cursor-pointer px-5 py-2.5 text-lg font-bold transition-all duration-300 ${activeTab === "inventory" ? "border-b-4 border-[#6F4E37] text-[#6F4E37]" : "text-[#A67B5B]"
-              }`}
-            onClick={() => { setActiveTab("inventory"); fetchMenuData(); }}
-          >
-            Daftar Stok
-          </button>
-          <button
-            className={`cursor-pointer px-5 py-2.5 text-lg font-bold transition-all duration-300 ${activeTab === "pos" ? "border-b-4 border-[#6F4E37] text-[#6F4E37]" : "text-[#A67B5B]"
-              }`}
-            onClick={() => { setActiveTab("pos"); fetchMenuData(); }}
-          >
-            Transaksi POS
-          </button>
-          <button
-            className={`cursor-pointer px-5 py-2.5 text-lg font-bold transition-all duration-300 ${activeTab === "omset" ? "border-b-4 border-[#6F4E37] text-[#6F4E37]" : "text-[#A67B5B]"
-              }`}
-            onClick={() => { setActiveTab("omset"); fetchOmsetData(); }}
-          >
-            📊 Omset
-          </button>
         </div>
 
-        {/* Section 1: Input Menu */}
-        {activeTab === "input" && (
-          <div className="animate-fadeIn">
-            <h2 className="mb-4 text-center text-2xl font-semibold text-[#6F4E37]">Tambah Menu Baru</h2>
-            {alert?.id === "alert-input" && (
-              <div className={`mb-4 rounded p-2.5 ${alert.type === "success" ? "bg-[#c8e6c9] text-[#1b5e20]" : "bg-[#ffcdd2] text-[#b71c1c]"}`}>
-                {alert.msg}
-              </div>
-            )}
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block font-bold">Nama Menu</label>
-                <input
-                  type="text"
-                  className="w-full rounded border border-gray-300 p-2.5"
-                  placeholder="Contoh: Espresso"
-                  value={formData.nama}
-                  onChange={(e) => setFormData({ ...formData, nama: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block font-bold">Kategori</label>
-                <select
-                  className="w-full rounded border border-gray-300 p-2.5"
-                  value={formData.kategori}
-                  onChange={(e) => setFormData({ ...formData, kategori: e.target.value as Category })}
-                >
-                  <option value="kopi">Kopi</option>
-                  <option value="non-kopi">Non-Kopi</option>
-                  <option value="makanan">Makanan</option>
-                </select>
-              </div>
-              <div>
-                <label className="mb-1.5 block font-bold">Harga Satuan (Rp)</label>
-                <input
-                  type="number"
-                  className="w-full rounded border border-gray-300 p-2.5"
-                  placeholder="15000"
-                  value={formData.harga}
-                  onChange={(e) => setFormData({ ...formData, harga: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block font-bold">Stok Awal</label>
-                <input
-                  type="number"
-                  className="w-full rounded border border-gray-300 p-2.5"
-                  placeholder="50"
-                  value={formData.stok}
-                  onChange={(e) => setFormData({ ...formData, stok: e.target.value })}
-                />
-              </div>
-              <button
-                className="w-full rounded bg-[#6F4E37] p-3 text-lg text-white transition-colors hover:bg-[#3C2A21] disabled:opacity-50"
-                onClick={handleSimpanMenu}
-                disabled={loading}
-              >
-                {loading ? "Menyimpan..." : "Simpan Menu"}
-              </button>
+        <nav className="flex-1 px-6 space-y-2 mt-4">
+          <button
+            onClick={() => nav("pos")}
+            className={`sidebar-link w-full flex items-center gap-4 px-5 py-3.5 rounded-2xl font-semibold ${activeView === "pos" ? "active" : "text-gray-500"
+              }`}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+            </svg>
+            Point of Sale
+          </button>
+          <button
+            onClick={() => nav("inventory")}
+            className={`sidebar-link w-full flex items-center gap-4 px-5 py-3.5 rounded-2xl font-semibold ${activeView === "inventory" ? "active" : "text-gray-500"
+              }`}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 11m8 4V4.5" />
+            </svg>
+            Inventory
+          </button>
+          <button
+            onClick={() => nav("report")}
+            className={`sidebar-link w-full flex items-center gap-4 px-5 py-3.5 rounded-2xl font-semibold ${activeView === "report" ? "active" : "text-gray-500"
+              }`}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+            Analytics
+          </button>
+        </nav>
+
+        <div className="p-6">
+          <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">
+                System Health
+              </span>
+              <div className={`w-2 h-2 rounded-full ${dbStatus === "online" ? "bg-green-500" : "bg-red-500 animate-ping"}`}></div>
+            </div>
+            <p className="text-xs font-bold text-gray-700">
+              {dbStatus === "online" ? "Service Operational" : "System Offline"}
+            </p>
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <p className="text-[10px] text-gray-400 font-medium">V 2.1.0 • Cak Yusop POS</p>
             </div>
           </div>
-        )}
+        </div>
+      </aside>
 
-        {/* Section 2: Daftar Stok */}
-        {activeTab === "inventory" && (
-          <div className="animate-fadeIn">
-            <h2 className="mb-4 text-center text-2xl font-semibold text-[#6F4E37]">Inventory & Stok</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-[#A67B5B] text-white">
-                    <th className="border border-gray-300 p-3 text-left">Nama</th>
-                    <th className="border border-gray-300 p-3 text-left">Kategori</th>
-                    <th className="border border-gray-300 p-3 text-left">Harga</th>
-                    <th className="border border-gray-300 p-3 text-left">Stok</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {menuData.map((item) => (
-                    <tr key={item.id} className="border-b border-gray-300">
-                      <td className="p-3">{item.nama}</td>
-                      <td className="p-3">
-                        <span className={`rounded px-2.5 py-1 text-xs ${getBadgeClass(item.kategori)}`}>
-                          {item.kategori}
-                        </span>
-                      </td>
-                      <td className="p-3">Rp. {item.harga.toLocaleString()}</td>
-                      <td className={`p-3 font-bold ${item.stok < 5 ? "text-red-600" : "text-black"}`}>
-                        {item.stok}
-                      </td>
-                    </tr>
-                  ))}
-                  {menuData.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="p-3 text-center text-gray-500 italic">
-                        {loading ? "Memuat data..." : "Belum ada menu."}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Section 3: Transaksi POS */}
-        {activeTab === "pos" && (
-          <div className="animate-fadeIn">
-            <h2 className="mb-4 text-center text-2xl font-semibold text-[#6F4E37]">Kasir (Point of Sale)</h2>
-            {alert?.id === "alert-pos" && (
-              <div className={`mb-4 rounded p-2.5 ${alert.type === "success" ? "bg-[#c8e6c9] text-[#1b5e20]" : "bg-[#ffcdd2] text-[#b71c1c]"}`}>
-                {alert.msg}
-              </div>
-            )}
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block font-bold">Pilih Menu</label>
-                <select
-                  className="w-full rounded border border-gray-300 p-2.5"
-                  value={posSelection.menuId}
-                  onChange={(e) => setPosSelection({ ...posSelection, menuId: e.target.value })}
-                >
-                  <option value="">-- Pilih Menu --</option>
-                  {menuData.map((item) => (
-                    <option key={item.id} value={item.id?.toString()}>
-                      {item.nama} (Stok: {item.stok})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1.5 block font-bold">Jumlah</label>
-                <input
-                  type="number"
-                  className="w-full rounded border border-gray-300 p-2.5"
-                  min="1"
-                  value={posSelection.qty}
-                  onChange={(e) => setPosSelection({ ...posSelection, qty: parseInt(e.target.value) || 1 })}
-                />
-              </div>
-              <button
-                className="w-full rounded bg-[#6F4E37] p-3 text-lg text-white transition-colors hover:bg-[#3C2A21] disabled:opacity-50"
-                onClick={handleProsesTransaksi}
-                disabled={loading}
-              >
-                {loading ? "Memproses..." : "Proses Transaksi"}
-              </button>
-            </div>
-
-            {receipt && (
-              <div className="mt-5 border border-dashed border-[#3C2A21] bg-[#f9f9f9] p-5">
-                <div className="mb-2.5 border-b border-gray-300 pb-2.5 text-center">
-                  <h3 className="text-xl font-bold">STRUK PENJUALAN</h3>
-                  <p className="text-sm">{receipt.date}</p>
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col bg-[#F9FAFB] overflow-hidden relative">
+        {/* View: POS */}
+        {activeView === "pos" && (
+          <section className="flex-1 flex overflow-hidden animate-fadeIn">
+            <div className="flex-1 p-10 overflow-y-auto custom-scroll">
+              <header className="mb-10 flex justify-between items-end">
+                <div>
+                  <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Main Menu</h2>
+                  <p className="text-gray-400 mt-1 font-medium">Select items to process customer orders</p>
                 </div>
-                <div className="space-y-1">
-                  <div className="flex justify-between font-medium">
-                    <span>{receipt.nama} x {receipt.qty}</span>
-                    <span>Rp. {receipt.total.toLocaleString()}</span>
+                <div className="flex gap-2">
+                  <span className="px-4 py-2 bg-white rounded-xl border border-gray-100 text-sm font-bold shadow-sm">
+                    All Categories
+                  </span>
+                </div>
+              </header>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                {products.map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => addToCart(item.id)}
+                    className={`card-premium group p-5 rounded-[32px] cursor-pointer relative ${item.stock <= 0 ? "opacity-40 grayscale pointer-events-none" : ""
+                      }`}
+                  >
+                    <div className="h-44 w-full bg-gray-50 rounded-[24px] mb-5 overflow-hidden border border-gray-100">
+                      {item.image_url ? (
+                        <img
+                          src={item.image_url}
+                          alt={item.name}
+                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-4xl opacity-20">☕</div>
+                      )}
+                    </div>
+                    <div className="flex justify-between items-start mb-1">
+                      <h4 className="font-extrabold text-gray-900 group-hover:text-[#4A3728] transition-colors line-clamp-1">
+                        {item.name}
+                      </h4>
+                      <span className={`text-[10px] font-black uppercase ${item.stock < 5 ? "text-red-500" : "text-gray-400"}`}>
+                        Stock: {item.stock}
+                      </span>
+                    </div>
+                    <p className="text-xl font-black text-[#4A3728]">{formatCurrency(item.price)}</p>
+
+                    <div className="absolute bottom-5 right-5 w-10 h-10 bg-white border border-gray-100 rounded-full flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all">
+                      <svg className="w-5 h-5 text-[#4A3728]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 4v16m8-8H4" />
+                      </svg>
+                    </div>
                   </div>
-                  <small className="text-gray-600">Harga Satuan: Rp. {receipt.harga.toLocaleString()}</small>
-                </div>
-                <div className="mt-2.5 border-t border-gray-300 pt-2.5 text-right text-lg font-bold">
-                  Total: Rp. {receipt.total.toLocaleString()}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Section 4: Omset Dashboard */}
-        {activeTab === "omset" && (
-          <div className="animate-fadeIn">
-            <h2 className="mb-4 text-center text-2xl font-semibold text-[#6F4E37]">📊 Dashboard Omset</h2>
-
-            {/* Filter */}
-            <div className="mb-5 flex flex-wrap items-end gap-4">
-              <div className="min-w-[150px] flex-1">
-                <label className="mb-1.5 block font-bold">Pilih Bulan</label>
-                <input
-                  type="month"
-                  className="w-full rounded border border-gray-300 p-2.5"
-                  value={filterBulan}
-                  onChange={(e) => setFilterBulan(e.target.value)}
-                />
-              </div>
-              <div className="min-w-[150px] flex-1">
-                <label className="mb-1.5 block font-bold">Pilih Tanggal</label>
-                <input
-                  type="date"
-                  className="w-full rounded border border-gray-300 p-2.5"
-                  value={filterTanggal}
-                  onChange={(e) => setFilterTanggal(e.target.value)}
-                />
-              </div>
-              <button
-                className="rounded bg-[#6F4E37] px-5 py-2.5 text-white transition-colors hover:bg-[#3C2A21]"
-                onClick={fetchOmsetData}
-              >
-                🔄 Refresh
-              </button>
-            </div>
-
-            {/* Stats Cards */}
-            <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-xl bg-gradient-to-br from-[#6F4E37] to-[#A67B5B] p-5 text-center text-white shadow-lg">
-                <h4 className="mb-2 text-sm opacity-90">💰 Omset Hari Ini</h4>
-                <div className="text-2xl font-bold">Rp. {omsetHari.toLocaleString()}</div>
-              </div>
-              <div className="rounded-xl bg-gradient-to-br from-[#43a047] to-[#66bb6a] p-5 text-center text-white shadow-lg">
-                <h4 className="mb-2 text-sm opacity-90">📅 Omset Bulan Ini</h4>
-                <div className="text-2xl font-bold">Rp. {omsetBulan.toLocaleString()}</div>
-              </div>
-              <div className="rounded-xl bg-gradient-to-br from-[#ff9800] to-[#ffb74d] p-5 text-center text-white shadow-lg">
-                <h4 className="mb-2 text-sm opacity-90">🛒 Total Transaksi</h4>
-                <div className="text-2xl font-bold">{totalTransaksi}</div>
-              </div>
-              <div className="rounded-xl bg-gradient-to-br from-[#1976d2] to-[#42a5f5] p-5 text-center text-white shadow-lg">
-                <h4 className="mb-2 text-sm opacity-90">📦 Item Terjual</h4>
-                <div className="text-2xl font-bold">{totalItem}</div>
+                ))}
               </div>
             </div>
 
-            {/* Two Column Layout */}
-            <div className="mb-6 grid gap-5 lg:grid-cols-2">
-              {/* Chart */}
-              <div className="rounded-xl bg-[#fafafa] p-5">
-                <h3 className="mb-4 border-b-2 border-[#ECB176] pb-2 text-center text-lg font-semibold text-[#6F4E37]">
-                  📈 Grafik Omset Harian (Bulan Ini)
-                </h3>
-                <div className="h-[250px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="tanggal" label={{ value: 'Tanggal', position: 'bottom', offset: -5 }} />
-                      <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} />
-                      <Tooltip
-                        formatter={(value: number) => [`Rp. ${value.toLocaleString()}`, 'Omset']}
-                        labelFormatter={(label) => `Tanggal ${label}`}
-                      />
-                      <Bar dataKey="omset" fill="#6F4E37" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
+            {/* Cart Sidebar */}
+            <div className="w-[420px] bg-white border-l border-gray-100 flex flex-col shadow-2xl z-10">
+              <div className="p-8 flex-1 flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between mb-8">
+                  <h3 className="text-xl font-extrabold text-gray-900">Current Order</h3>
+                  <span className="bg-[#4A3728] text-white text-[10px] font-bold px-2 py-1 rounded-md">
+                    {cartCount} ITEMS
+                  </span>
                 </div>
-              </div>
 
-              {/* Top Selling */}
-              <div className="rounded-xl bg-[#fafafa] p-5">
-                <h3 className="mb-4 border-b-2 border-[#ECB176] pb-2 text-center text-lg font-semibold text-[#6F4E37]">
-                  🏆 Menu Paling Laku
-                </h3>
-                <div className="space-y-3">
-                  {topSelling.length === 0 ? (
-                    <p className="text-center text-gray-500">Belum ada data penjualan</p>
+                <div className="flex-1 overflow-y-auto custom-scroll space-y-4 pr-2">
+                  {cart.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center py-20 opacity-30">
+                      <div className="text-6xl mb-4">🛒</div>
+                      <p className="font-bold text-sm tracking-widest uppercase">Cart is Empty</p>
+                    </div>
                   ) : (
-                    topSelling.map((item, index) => (
-                      <div
-                        key={item.nama}
-                        className="flex items-center justify-between rounded-lg border-l-4 border-[#6F4E37] bg-[#f5f5f5] p-4"
-                      >
-                        <div className="text-2xl font-bold text-[#6F4E37]">#{index + 1}</div>
-                        <div className="flex-1 px-4">
-                          <h4 className="font-semibold text-[#3C2A21]">{item.nama}</h4>
-                          <small className="text-gray-500">Total: Rp. {item.total.toLocaleString()}</small>
+                    cart.map((item) => (
+                      <div key={item.id} className="flex items-center gap-4 bg-gray-50/80 p-4 rounded-2xl border border-gray-100 group">
+                        <div className="w-12 h-12 rounded-xl bg-white flex-shrink-0 flex items-center justify-center font-bold text-[#4A3728] shadow-sm border border-gray-100">
+                          {item.qty}x
                         </div>
-                        <div className="text-lg font-bold text-[#4CAF50]">{item.qty} terjual</div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-gray-900 truncate">{item.name}</p>
+                          <p className="text-xs font-bold text-gray-400">{formatCurrency(item.price)}</p>
+                        </div>
+                        <div className="flex items-center gap-1 bg-white p-1 rounded-xl shadow-inner border border-gray-100">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); updateQty(item.id, -1); }}
+                            className="w-8 h-8 flex items-center justify-center hover:bg-red-50 hover:text-red-500 rounded-lg transition-colors font-bold"
+                          >
+                            -
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); updateQty(item.id, 1); }}
+                            className="w-8 h-8 flex items-center justify-center hover:bg-green-50 hover:text-green-500 rounded-lg transition-colors font-bold"
+                          >
+                            +
+                          </button>
+                        </div>
                       </div>
                     ))
                   )}
                 </div>
               </div>
-            </div>
 
-            {/* Transaction History */}
-            <div className="rounded-xl bg-[#fafafa] p-5">
-              <h3 className="mb-4 border-b-2 border-[#ECB176] pb-2 text-center text-lg font-semibold text-[#6F4E37]">
-                📋 Riwayat Transaksi Hari Ini
-              </h3>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
+              <div className="p-8 bg-gray-50/50 border-t border-gray-100">
+                <div className="space-y-3 mb-8">
+                  <div className="flex justify-between text-gray-400 font-medium">
+                    <span>Order Subtotal</span>
+                    <span className="text-gray-900 font-bold">{formatCurrency(cartTotal)}</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-3 border-t border-gray-100">
+                    <span className="text-gray-900 font-extrabold text-lg">Grand Total</span>
+                    <span className="text-2xl font-black text-[#4A3728]">{formatCurrency(cartTotal)}</span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={checkout}
+                  disabled={loading || cart.length === 0}
+                  className="w-full bg-[#4A3728] text-white py-5 rounded-2xl font-bold text-lg hover:bg-black transition-all shadow-xl shadow-amber-950/20 active:scale-[0.98] disabled:opacity-50"
+                >
+                  {loading ? "Processing..." : "Complete Transaction"}
+                </button>
+                <button
+                  onClick={clearCart}
+                  className="w-full mt-4 py-2 text-gray-400 text-xs font-bold hover:text-red-500 uppercase tracking-widest transition-colors"
+                >
+                  Discard All Items
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* View: Inventory */}
+        {activeView === "inventory" && (
+          <section className="flex-1 p-10 overflow-y-auto custom-scroll animate-fadeIn">
+            <div className="max-w-6xl mx-auto">
+              <div className="flex justify-between items-center mb-10">
+                <div>
+                  <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Stock Inventory</h2>
+                  <p className="text-gray-400 font-medium">Manage your menu offerings and stock levels</p>
+                </div>
+                <button
+                  onClick={() => setShowModal(true)}
+                  className="bg-[#4A3728] text-white px-8 py-4 rounded-2xl font-bold shadow-lg shadow-amber-950/20 hover:bg-black transition-all flex items-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add New Item
+                </button>
+              </div>
+
+              <div className="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden">
+                <table className="w-full text-left">
                   <thead>
-                    <tr className="bg-[#A67B5B] text-white">
-                      <th className="border border-gray-300 p-3 text-left">Waktu</th>
-                      <th className="border border-gray-300 p-3 text-left">Menu</th>
-                      <th className="border border-gray-300 p-3 text-left">Qty</th>
-                      <th className="border border-gray-300 p-3 text-left">Total</th>
+                    <tr className="bg-gray-50/50 border-b border-gray-100">
+                      <th className="px-8 py-5 text-[11px] font-black text-gray-400 uppercase tracking-widest">Menu Details</th>
+                      <th className="px-8 py-5 text-[11px] font-black text-gray-400 uppercase tracking-widest text-right">Unit Price</th>
+                      <th className="px-8 py-5 text-[11px] font-black text-gray-400 uppercase tracking-widest text-center">Status</th>
+                      <th className="px-8 py-5 text-[11px] font-black text-gray-400 uppercase tracking-widest text-center">Actions</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {transaksiHariIni.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="p-3 text-center text-gray-500">
-                          Belum ada transaksi hari ini
+                  <tbody className="divide-y divide-gray-50">
+                    {products.map((item) => (
+                      <tr key={item.id} className="hover:bg-gray-50/50 transition-colors">
+                        <td className="px-8 py-6">
+                          <div className="flex items-center gap-4">
+                            <div className="w-14 h-14 rounded-2xl bg-gray-50 border border-gray-100 overflow-hidden flex-shrink-0">
+                              {item.image_url ? (
+                                <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center opacity-20 text-xl">☕</div>
+                              )}
+                            </div>
+                            <div>
+                              <p className="font-black text-gray-900">{item.name}</p>
+                              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">
+                                ID: {item.id.slice(0, 8)}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-8 py-6 text-right font-black text-[#4A3728] text-lg">
+                          {formatCurrency(item.price)}
+                        </td>
+                        <td className="px-8 py-6 text-center">
+                          <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase ${item.stock < 10 ? "bg-red-50 text-red-600" : "bg-green-50 text-green-600"
+                            }`}>
+                            {item.stock} Unit In Stock
+                          </span>
+                        </td>
+                        <td className="px-8 py-6 text-center">
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              onClick={() => handleDeleteMenu(item.id)}
+                              className="p-2 hover:bg-red-50 text-gray-300 hover:text-red-500 rounded-xl transition-all"
+                            >
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </div>
                         </td>
                       </tr>
-                    ) : (
-                      [...transaksiHariIni]
-                        .sort((a, b) => new Date(b.tanggal || '').getTime() - new Date(a.tanggal || '').getTime())
-                        .map((t) => (
-                          <tr key={t.id} className="border-b border-gray-300">
-                            <td className="p-3">
-                              {t.tanggal ? new Date(t.tanggal).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-'}
-                            </td>
-                            <td className="p-3">{t.menu_nama}</td>
-                            <td className="p-3">{t.qty}</td>
-                            <td className="p-3">Rp. {t.total_harga.toLocaleString()}</td>
-                          </tr>
-                        ))
-                    )}
+                    ))}
                   </tbody>
                 </table>
               </div>
             </div>
-          </div>
+          </section>
         )}
-      </div>
+
+        {/* View: Analytics */}
+        {activeView === "report" && (
+          <section className="flex-1 p-10 overflow-y-auto custom-scroll animate-fadeIn">
+            <div className="max-w-6xl mx-auto">
+              <header className="mb-10">
+                <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Analytics Dashboard</h2>
+                <p className="text-gray-400 font-medium">Real-time performance metrics</p>
+              </header>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">
+                <div className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group">
+                  <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
+                    <svg className="w-16 h-16 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
+                    </svg>
+                  </div>
+                  <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Today&apos;s Revenue</p>
+                  <h3 className="text-3xl font-black text-green-600">{formatCurrency(dailyRevenue)}</h3>
+                  <p className="text-xs text-gray-400 mt-2 font-medium">Across all transactions</p>
+                </div>
+
+                <div className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group">
+                  <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Total Orders</p>
+                  <h3 className="text-3xl font-black text-[#4A3728]">{todayOrders.length}</h3>
+                  <p className="text-xs text-gray-400 mt-2 font-medium">Daily count</p>
+                </div>
+
+                <div className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group">
+                  <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Month to Date</p>
+                  <h3 className="text-3xl font-black text-blue-600">{formatCurrency(monthlyRevenue)}</h3>
+                  <p className="text-xs text-gray-400 mt-2 font-medium">Cumulative growth</p>
+                </div>
+              </div>
+
+              <div className="bg-white p-10 rounded-[40px] border border-gray-100 shadow-sm">
+                <div className="flex justify-between items-center mb-10">
+                  <h4 className="text-xl font-extrabold text-gray-900">Revenue Trends</h4>
+                  <select className="bg-gray-50 border-none rounded-xl px-4 py-2 text-xs font-bold text-gray-500 focus:ring-0">
+                    <option>Last 7 Days</option>
+                    <option>Last 30 Days</option>
+                  </select>
+                </div>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData}>
+                      <defs>
+                        <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#4A3728" stopOpacity={0.1} />
+                          <stop offset="95%" stopColor="#4A3728" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="5 5" stroke="#F3F4F6" />
+                      <XAxis dataKey="day" tick={{ fontSize: 10, fontWeight: "bold" }} />
+                      <YAxis tick={{ fontSize: 10, fontWeight: "bold" }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                      <Tooltip formatter={(value: number) => [formatCurrency(value), "Revenue"]} />
+                      <Area type="monotone" dataKey="revenue" stroke="#4A3728" strokeWidth={4} fillOpacity={1} fill="url(#colorRevenue)" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+      </main>
+
+      {/* Modal: Add Product */}
+      {showModal && (
+        <div className="fixed inset-0 bg-[#4A3728]/40 backdrop-blur-md flex items-center justify-center z-[100]">
+          <div className="bg-white w-[500px] rounded-[40px] p-10 shadow-2xl animate-scaleIn">
+            <div className="mb-8">
+              <h3 className="text-2xl font-black text-gray-900">New Product</h3>
+              <p className="text-gray-400 font-medium">Enter details for the new menu item</p>
+            </div>
+
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest ml-1">Product Title</label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="e.g. Signature Arabica Blend"
+                  className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl font-semibold text-gray-800 placeholder:text-gray-300"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest ml-1">Price (IDR)</label>
+                  <input
+                    type="number"
+                    value={formData.price}
+                    onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                    placeholder="0"
+                    className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-[#4A3728]"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest ml-1">Initial Stock</label>
+                  <input
+                    type="number"
+                    value={formData.stock}
+                    onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
+                    placeholder="10"
+                    className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest ml-1">Cover Image URL</label>
+                <input
+                  type="text"
+                  value={formData.image_url}
+                  onChange={(e) => setFormData({ ...formData, image_url: e.target.value })}
+                  placeholder="https://images.unsplash.com/..."
+                  className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl font-medium text-xs text-gray-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-4 mt-10">
+              <button
+                onClick={() => setShowModal(false)}
+                className="flex-1 py-4 text-gray-400 font-bold hover:bg-gray-50 rounded-2xl transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveMenu}
+                disabled={loading}
+                className="flex-[2] px-10 py-4 bg-[#4A3728] text-white font-bold rounded-2xl shadow-xl shadow-amber-950/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50"
+              >
+                {loading ? "Adding..." : "Add Item"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
