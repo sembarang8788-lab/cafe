@@ -45,6 +45,12 @@ export default function Home() {
     image_url: "",
   });
 
+  // Analytics Filters
+  const [filterDate, setFilterDate] = useState(new Date().toISOString().slice(0, 10));
+  const [filterMonth, setFilterMonth] = useState(new Date().getMonth() + 1);
+  const [filterYear, setFilterYear] = useState(new Date().getFullYear());
+
+
   // Chart data
   const [chartData, setChartData] = useState<{ day: string; revenue: number }[]>([]);
   const [topProducts, setTopProducts] = useState<{ id: string; name: string; image: string; sold: number; revenue: number }[]>([]);
@@ -228,20 +234,18 @@ export default function Home() {
   };
 
   // Stats calculations
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const todayOrders = orders.filter((o) => o.created_at?.startsWith(todayStr));
-  const dailyRevenue = todayOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+  const filteredDailyOrders = orders.filter((o) => o.created_at?.startsWith(filterDate));
+  const dailyRevenue = filteredDailyOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
 
-  // Monthly revenue - only current month
-  const now = new Date();
-  const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const currentMonthOrders = orders.filter((o) => o.created_at?.startsWith(currentMonthStr));
-  const monthlyRevenue = currentMonthOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
-  const monthlyOrderCount = currentMonthOrders.length;
+  // Monthly revenue - filtered by month and year
+  const selectedMonthStr = `${filterYear}-${String(filterMonth).padStart(2, '0')}`;
+  const filteredMonthlyOrders = orders.filter((o) => o.created_at?.startsWith(selectedMonthStr));
+  const monthlyRevenue = filteredMonthlyOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+  const monthlyOrderCount = filteredMonthlyOrders.length;
 
-  // Previous month revenue for comparison
-  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const prevMonthStr = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
+  // Previous month revenue for comparison (previous to selected month)
+  const prevMonthDate = new Date(filterYear, filterMonth - 2, 1);
+  const prevMonthStr = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
   const prevMonthOrders = orders.filter((o) => o.created_at?.startsWith(prevMonthStr));
   const prevMonthlyRevenue = prevMonthOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
   const monthlyGrowth = prevMonthlyRevenue > 0 ? ((monthlyRevenue - prevMonthlyRevenue) / prevMonthlyRevenue * 100).toFixed(1) : null;
@@ -551,11 +555,18 @@ export default function Home() {
                     </svg>
                   </div>
                   <div className="relative z-10">
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Today's Revenue</p>
+                    <div className="flex justify-between items-start mb-2 text-gray-400">
+                      <p className="text-[10px] font-black uppercase tracking-widest">Daily Revenue</p>
+                      <input
+                        type="date"
+                        value={filterDate}
+                        onChange={(e) => setFilterDate(e.target.value)}
+                        className="text-[10px] font-bold bg-transparent border-none outline-none focus:ring-0 cursor-pointer"
+                      />
+                    </div>
                     <h3 className="text-4xl font-black text-[#4A3728] tracking-tight">{formatCurrency(dailyRevenue)}</h3>
                     <div className="flex items-center gap-1 mt-3">
-                      <span className="px-2 py-0.5 bg-green-50 text-green-700 text-[10px] font-bold rounded-full">+12%</span>
-                      <span className="text-[10px] font-medium text-gray-400">vs yesterday</span>
+                      <span className="text-[10px] font-medium text-gray-400">Selected date: {new Date(filterDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                     </div>
                   </div>
                 </div>
@@ -568,9 +579,9 @@ export default function Home() {
                   </div>
                   <div className="relative z-10">
                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Total Orders</p>
-                    <h3 className="text-4xl font-black text-gray-900 tracking-tight">{todayOrders.length}</h3>
+                    <h3 className="text-4xl font-black text-gray-900 tracking-tight">{filteredDailyOrders.length}</h3>
                     <div className="flex items-center gap-1 mt-3">
-                      <span className="text-[10px] font-medium text-gray-400">Transactions today</span>
+                      <span className="text-[10px] font-medium text-gray-400">Transactions on selected date</span>
                     </div>
                   </div>
                 </div>
@@ -582,7 +593,29 @@ export default function Home() {
                     </svg>
                   </div>
                   <div className="relative z-10">
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Monthly Revenue</p>
+                    <div className="flex justify-between items-start mb-2 text-gray-400">
+                      <p className="text-[10px] font-black uppercase tracking-widest">Monthly Revenue</p>
+                      <div className="flex gap-1">
+                        <select
+                          value={filterMonth}
+                          onChange={(e) => setFilterMonth(Number(e.target.value))}
+                          className="text-[10px] font-bold bg-transparent border-none outline-none focus:ring-0 cursor-pointer"
+                        >
+                          {Array.from({ length: 12 }, (_, i) => (
+                            <option key={i + 1} value={i + 1}>{new Date(2000, i).toLocaleString('id-ID', { month: 'short' })}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={filterYear}
+                          onChange={(e) => setFilterYear(Number(e.target.value))}
+                          className="text-[10px] font-bold bg-transparent border-none outline-none focus:ring-0 cursor-pointer"
+                        >
+                          {Array.from({ length: new Date().getFullYear() - 2020 + 2 }, (_, i) => 2020 + i).map(y => (
+                            <option key={y} value={y}>{y}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
                     <h3 className="text-3xl font-black text-[#4A3728] tracking-tight">{formatCurrency(monthlyRevenue)}</h3>
                     <div className="flex items-center gap-2 mt-3 flex-wrap">
                       <span className="px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] font-bold rounded-full">{monthlyOrderCount} orders</span>
@@ -638,7 +671,7 @@ export default function Home() {
                         <Tooltip
                           contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                           cursor={{ stroke: '#4A3728', strokeWidth: 2, strokeDasharray: '4 4' }}
-                          formatter={(value: number) => [formatCurrency(value), "Revenue"]}
+                          formatter={(value: number | undefined) => [formatCurrency(value || 0), "Revenue"]}
                         />
                         <Area
                           type="monotone"
