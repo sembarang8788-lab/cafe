@@ -25,6 +25,7 @@ export interface Order {
     user_id?: string | null
     total_amount: number
     created_at: string
+    order_items?: OrderItem[]
 }
 
 export interface OrderItem {
@@ -79,7 +80,7 @@ export async function deleteProduct(id: string): Promise<boolean> {
 export async function getOrders(): Promise<Order[]> {
     const { data, error } = await supabase
         .from('orders')
-        .select('*')
+        .select('*, order_items(*)')
         .order('created_at', { ascending: false })
 
     if (error) throw error

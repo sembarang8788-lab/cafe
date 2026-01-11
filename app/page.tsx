@@ -47,6 +47,7 @@ export default function Home() {
 
   // Chart data
   const [chartData, setChartData] = useState<{ day: string; revenue: number }[]>([]);
+  const [topProducts, setTopProducts] = useState<{ id: string; name: string; image: string; sold: number; revenue: number }[]>([]);
 
   // Load data on mount
   useEffect(() => {
@@ -62,7 +63,7 @@ export default function Home() {
       ]);
       setProducts(productsData);
       setOrders(ordersData);
-      updateStats(ordersData);
+      updateStats(ordersData, productsData);
       setDbStatus("online");
     } catch (err) {
       console.error("DB Error:", err);
@@ -72,7 +73,8 @@ export default function Home() {
     }
   };
 
-  const updateStats = (ordersData: Order[]) => {
+  const updateStats = (ordersData: Order[], productsData: Product[]) => {
+    // 1. Chart Data
     const labels: string[] = [];
     const data: number[] = [];
     for (let i = 6; i >= 0; i--) {
@@ -86,6 +88,37 @@ export default function Home() {
       data.push(sum);
     }
     setChartData(labels.map((day, i) => ({ day, revenue: data[i] })));
+
+    // 2. Top Selling Products
+    const productStats: Record<string, { qty: number; revenue: number }> = {};
+    ordersData.forEach(order => {
+      if (order.order_items) {
+        order.order_items.forEach(item => {
+          if (!productStats[item.product_id]) {
+            productStats[item.product_id] = { qty: 0, revenue: 0 };
+          }
+          productStats[item.product_id].qty += item.quantity;
+          productStats[item.product_id].revenue += item.price * item.quantity;
+        });
+      }
+    });
+
+    const sortedProducts = Object.entries(productStats)
+      .map(([id, stats]) => {
+        const product = productsData.find(p => p.id === id);
+        return {
+          id,
+          name: product?.name || 'Unknown Item',
+          image: product?.image_url || '',
+          sold: stats.qty,
+          revenue: stats.revenue
+        };
+      })
+      .filter(p => p.name !== 'Unknown Item')
+      .sort((a, b) => b.sold - a.sold)
+      .slice(0, 5);
+
+    setTopProducts(sortedProducts);
   };
 
   // Navigation
@@ -198,7 +231,20 @@ export default function Home() {
   const todayStr = new Date().toISOString().slice(0, 10);
   const todayOrders = orders.filter((o) => o.created_at?.startsWith(todayStr));
   const dailyRevenue = todayOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
-  const monthlyRevenue = orders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+
+  // Monthly revenue - only current month
+  const now = new Date();
+  const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const currentMonthOrders = orders.filter((o) => o.created_at?.startsWith(currentMonthStr));
+  const monthlyRevenue = currentMonthOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+  const monthlyOrderCount = currentMonthOrders.length;
+
+  // Previous month revenue for comparison
+  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevMonthStr = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
+  const prevMonthOrders = orders.filter((o) => o.created_at?.startsWith(prevMonthStr));
+  const prevMonthlyRevenue = prevMonthOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+  const monthlyGrowth = prevMonthlyRevenue > 0 ? ((monthlyRevenue - prevMonthlyRevenue) / prevMonthlyRevenue * 100).toFixed(1) : null;
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -483,62 +529,173 @@ export default function Home() {
 
         {/* View: Analytics */}
         {activeView === "report" && (
-          <section className="flex-1 p-10 overflow-y-auto custom-scroll animate-fadeIn">
-            <div className="max-w-6xl mx-auto">
-              <header className="mb-10">
-                <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Analytics Dashboard</h2>
-                <p className="text-gray-400 font-medium">Real-time performance metrics</p>
+          <section className="flex-1 p-8 overflow-y-auto custom-scroll animate-fadeIn bg-[#F9FAFB]">
+            <div className="max-w-7xl mx-auto space-y-8">
+              <header className="flex justify-between items-end">
+                <div>
+                  <h2 className="text-4xl font-extrabold text-[#4A3728] tracking-tight">Analytics Center</h2>
+                  <p className="text-gray-400 font-bold mt-1">Real-time business performance insights</p>
+                </div>
+                <div className="bg-white px-4 py-2 rounded-xl border border-gray-100 shadow-sm flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                  <span className="text-xs font-bold text-gray-600">Live Data</span>
+                </div>
               </header>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">
-                <div className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group">
-                  <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
-                    <svg className="w-16 h-16 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
+              {/* Stats Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group hover:shadow-lg transition-all duration-300">
+                  <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:scale-110 transition-transform">
+                    <svg className="w-24 h-24 text-[#4A3728]" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1.41 16.09V20h-2.67v-1.93c-1.71-.36-3.16-1.46-3.27-3.4h1.96c.1 1.05 1.18 1.91 2.53 1.91 1.35 0 2.53-.86 2.53-1.9s-1.18-1.91-2.53-1.91c-2.53 0-5.12-2-5.12-4.59 0-2.45 1.8-4.14 4.09-4.49V2h2.67v1.88c1.71.36 3.16 1.46 3.27 3.4h-1.96c-.1-1.05-1.18-1.91-2.53-1.91-1.35 0-2.53.86-2.53 1.9s1.18 1.91 2.53 1.91c2.53 0 5.12 2 5.12 4.59 0 2.45-1.8 4.14-4.09 4.49z" />
                     </svg>
                   </div>
-                  <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Today&apos;s Revenue</p>
-                  <h3 className="text-3xl font-black text-green-600">{formatCurrency(dailyRevenue)}</h3>
-                  <p className="text-xs text-gray-400 mt-2 font-medium">Across all transactions</p>
+                  <div className="relative z-10">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Today's Revenue</p>
+                    <h3 className="text-4xl font-black text-[#4A3728] tracking-tight">{formatCurrency(dailyRevenue)}</h3>
+                    <div className="flex items-center gap-1 mt-3">
+                      <span className="px-2 py-0.5 bg-green-50 text-green-700 text-[10px] font-bold rounded-full">+12%</span>
+                      <span className="text-[10px] font-medium text-gray-400">vs yesterday</span>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group">
-                  <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Total Orders</p>
-                  <h3 className="text-3xl font-black text-[#4A3728]">{todayOrders.length}</h3>
-                  <p className="text-xs text-gray-400 mt-2 font-medium">Daily count</p>
+                <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group hover:shadow-lg transition-all duration-300">
+                  <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:scale-110 transition-transform">
+                    <svg className="w-24 h-24 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z" />
+                    </svg>
+                  </div>
+                  <div className="relative z-10">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Total Orders</p>
+                    <h3 className="text-4xl font-black text-gray-900 tracking-tight">{todayOrders.length}</h3>
+                    <div className="flex items-center gap-1 mt-3">
+                      <span className="text-[10px] font-medium text-gray-400">Transactions today</span>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group">
-                  <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Month to Date</p>
-                  <h3 className="text-3xl font-black text-blue-600">{formatCurrency(monthlyRevenue)}</h3>
-                  <p className="text-xs text-gray-400 mt-2 font-medium">Cumulative growth</p>
+                <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group hover:shadow-lg transition-all duration-300">
+                  <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:scale-110 transition-transform">
+                    <svg className="w-24 h-24 text-purple-600" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z" />
+                    </svg>
+                  </div>
+                  <div className="relative z-10">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Monthly Revenue</p>
+                    <h3 className="text-3xl font-black text-[#4A3728] tracking-tight">{formatCurrency(monthlyRevenue)}</h3>
+                    <div className="flex items-center gap-2 mt-3 flex-wrap">
+                      <span className="px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] font-bold rounded-full">{monthlyOrderCount} orders</span>
+                      {monthlyGrowth !== null && (
+                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${Number(monthlyGrowth) >= 0 ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                          {Number(monthlyGrowth) >= 0 ? '+' : ''}{monthlyGrowth}%
+                        </span>
+                      )}
+                      <span className="text-[10px] font-medium text-gray-400">{monthlyGrowth !== null ? 'vs last month' : 'This month'}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              <div className="bg-white p-10 rounded-[40px] border border-gray-100 shadow-sm">
-                <div className="flex justify-between items-center mb-10">
-                  <h4 className="text-xl font-extrabold text-gray-900">Revenue Trends</h4>
-                  <select className="bg-gray-50 border-none rounded-xl px-4 py-2 text-xs font-bold text-gray-500 focus:ring-0">
-                    <option>Last 7 Days</option>
-                    <option>Last 30 Days</option>
-                  </select>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-[500px]">
+                {/* Chart Section */}
+                <div className="lg:col-span-2 bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm h-full flex flex-col">
+                  <div className="flex justify-between items-center mb-8">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-[#4A3728]/10 rounded-lg text-[#4A3728]">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" /></svg>
+                      </div>
+                      <div>
+                        <h4 className="text-lg font-extrabold text-gray-900">Revenue Trends</h4>
+                        <p className="text-xs font-medium text-gray-400">Last 7 days performance</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex-1 w-full min-h-0">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={chartData}>
+                        <defs>
+                          <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#4A3728" stopOpacity={0.2} />
+                            <stop offset="95%" stopColor="#4A3728" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
+                        <XAxis
+                          dataKey="day"
+                          tick={{ fontSize: 11, fontWeight: "600", fill: "#9CA3AF" }}
+                          axisLine={false}
+                          tickLine={false}
+                          dy={10}
+                        />
+                        <YAxis
+                          tick={{ fontSize: 11, fontWeight: "600", fill: "#9CA3AF" }}
+                          tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`}
+                          axisLine={false}
+                          tickLine={false}
+                          dx={-10}
+                        />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                          cursor={{ stroke: '#4A3728', strokeWidth: 2, strokeDasharray: '4 4' }}
+                          formatter={(value: number) => [formatCurrency(value), "Revenue"]}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="revenue"
+                          stroke="#4A3728"
+                          strokeWidth={3}
+                          fillOpacity={1}
+                          fill="url(#colorRevenue)"
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
                 </div>
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={chartData}>
-                      <defs>
-                        <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#4A3728" stopOpacity={0.1} />
-                          <stop offset="95%" stopColor="#4A3728" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="5 5" stroke="#F3F4F6" />
-                      <XAxis dataKey="day" tick={{ fontSize: 10, fontWeight: "bold" }} />
-                      <YAxis tick={{ fontSize: 10, fontWeight: "bold" }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
-                      <Tooltip formatter={(value: number) => [formatCurrency(value), "Revenue"]} />
-                      <Area type="monotone" dataKey="revenue" stroke="#4A3728" strokeWidth={4} fillOpacity={1} fill="url(#colorRevenue)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
+
+                {/* Top Selling Section */}
+                <div className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm h-full flex flex-col">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="p-2 bg-yellow-100 rounded-lg text-yellow-600">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>
+                    </div>
+                    <div>
+                      <h4 className="text-lg font-extrabold text-gray-900">Menu Terlaris</h4>
+                      <p className="text-xs font-medium text-gray-400">Most ordered items</p>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scroll">
+                    {topProducts.length === 0 ? (
+                      <div className="h-full flex flex-col items-center justify-center text-center opacity-40">
+                        <span className="text-4xl mb-2">🍽️</span>
+                        <p className="text-sm font-bold text-gray-400">No sale data yet.</p>
+                      </div>
+                    ) : (
+                      topProducts.map((p, i) => (
+                        <div key={p.id} className="flex items-center gap-4 p-3 rounded-2xl bg-gray-50/50 hover:bg-gray-100 transition-colors group cursor-default">
+                          <div className="relative">
+                            <div className="w-12 h-12 rounded-xl bg-white border border-gray-100 overflow-hidden shrink-0 shadow-sm">
+                              {p.image ? <img src={p.image} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-lg">☕</div>}
+                            </div>
+                            <div className={`absolute -top-2 -left-2 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black border-2 border-white shadow-sm
+                                    ${i === 0 ? 'bg-yellow-400 text-yellow-900' :
+                                i === 1 ? 'bg-gray-300 text-gray-800' :
+                                  i === 2 ? 'bg-orange-300 text-orange-900' : 'bg-gray-100 text-gray-500'}`}>
+                              {i + 1}
+                            </div>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-gray-900 truncate text-sm">{p.name}</p>
+                            <p className="text-[10px] text-gray-500 font-bold">{p.sold} orders sold</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-black text-[#4A3728] text-sm">{formatCurrency(p.revenue)}</p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
