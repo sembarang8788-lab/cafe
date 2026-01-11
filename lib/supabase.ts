@@ -16,9 +16,11 @@ export interface Product {
     name: string
     price: number
     stock: number
+    category: 'makanan' | 'minuman'
     image_url?: string | null
     created_at?: string
 }
+
 
 export interface Order {
     id: string
@@ -62,6 +64,26 @@ export async function addProduct(product: Omit<Product, 'id' | 'created_at'>): P
     if (error) throw error
     return data as Product
 }
+
+export async function updateProduct(id: string, updates: Partial<Omit<Product, 'id' | 'created_at'>>): Promise<Product> {
+    const { data, error } = await supabase
+        .from('products')
+        .update(updates)
+        .eq('id', id)
+        .select()
+
+    if (error) {
+        console.error("Supabase Update Error:", error)
+        throw error
+    }
+
+    if (!data || data.length === 0) {
+        throw new Error("No product found with ID: " + id)
+    }
+
+    return data[0] as Product
+}
+
 
 export async function deleteProduct(id: string): Promise<boolean> {
     const { error } = await supabase

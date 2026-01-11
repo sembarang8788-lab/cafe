@@ -9,9 +9,11 @@ CREATE TABLE IF NOT EXISTS products (
   name text NOT NULL,
   price numeric NOT NULL,
   stock integer DEFAULT 0 CHECK (stock >= 0),
+  category text DEFAULT 'makanan',
   image_url text,
   created_at timestamptz DEFAULT now()
 );
+
 
 -- 2. Tabel Pesanan (Header)
 CREATE TABLE IF NOT EXISTS orders (

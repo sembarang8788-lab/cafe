@@ -6,7 +6,9 @@ import {
   getProducts,
   addProduct,
   deleteProduct,
+  updateProduct,
   getOrders,
+
   createOrderAndReduceStock,
   formatCurrency,
   type Product,
@@ -38,12 +40,19 @@ export default function Home() {
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     price: "",
     stock: "",
+    category: "makanan",
     image_url: "",
   });
+
+
+  // POS Category Filter
+  const [posCategory, setPosCategory] = useState<"all" | "makanan" | "minuman">("all");
+
 
   // Analytics Filters
   const [filterDate, setFilterDate] = useState(new Date().toISOString().slice(0, 10));
@@ -67,6 +76,7 @@ export default function Home() {
         getProducts(),
         getOrders(),
       ]);
+      console.log("Fetched Products Sample:", productsData[0]);
       setProducts(productsData);
       setOrders(ordersData);
       updateStats(ordersData, productsData);
@@ -80,24 +90,29 @@ export default function Home() {
   };
 
   const updateStats = (ordersData: Order[], productsData: Product[]) => {
-    // 1. Chart Data
-    const labels: string[] = [];
-    const data: number[] = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().slice(0, 10);
-      labels.push(d.toLocaleDateString("id-ID", { weekday: "short" }));
+    // 1. Chart Data - Show entire selected month
+    const daysInMonth = new Date(filterYear, filterMonth, 0).getDate();
+    const newChartData = [];
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = `${filterYear}-${String(filterMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const sum = ordersData
         .filter((o) => o.created_at && o.created_at.startsWith(dateStr))
         .reduce((s, o) => s + Number(o.total_amount || 0), 0);
-      data.push(sum);
-    }
-    setChartData(labels.map((day, i) => ({ day, revenue: data[i] })));
 
-    // 2. Top Selling Products
+      newChartData.push({
+        day: day.toString(),
+        revenue: sum
+      });
+    }
+    setChartData(newChartData);
+
+    // 2. Top Selling Products - Only from selected month
+    const selectedMonthStr = `${filterYear}-${String(filterMonth).padStart(2, '0')}`;
+    const monthlyOrders = ordersData.filter(o => o.created_at?.startsWith(selectedMonthStr));
+
     const productStats: Record<string, { qty: number; revenue: number }> = {};
-    ordersData.forEach(order => {
+    monthlyOrders.forEach(order => {
       if (order.order_items) {
         order.order_items.forEach(item => {
           if (!productStats[item.product_id]) {
@@ -121,11 +136,19 @@ export default function Home() {
         };
       })
       .filter(p => p.name !== 'Unknown Item')
-      .sort((a, b) => b.sold - a.sold)
+      .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 5);
 
     setTopProducts(sortedProducts);
   };
+
+  // Sync stats when filters or orders change
+  useEffect(() => {
+    if (orders.length > 0 && products.length > 0) {
+      updateStats(orders, products);
+    }
+  }, [filterMonth, filterYear, orders, products]);
+
 
   // Navigation
   const nav = (target: ViewType) => {
@@ -206,21 +229,57 @@ export default function Home() {
 
     try {
       setLoading(true);
-      await addProduct({
+      console.log("Saving product data:", {
+        id: editingProduct?.id,
         name,
         price: p,
-        stock: s || 0,
-        image_url: image_url || null,
+        stock: s,
+        category: formData.category,
+        image_url
       });
-      setFormData({ name: "", price: "", stock: "", image_url: "" });
+
+      if (editingProduct) {
+        await updateProduct(editingProduct.id, {
+          name,
+          price: p,
+          stock: isNaN(s) ? 0 : s,
+          category: formData.category as any,
+          image_url: image_url || null,
+        });
+      } else {
+        await addProduct({
+          name,
+          price: p,
+          stock: isNaN(s) ? 0 : s,
+          category: formData.category as any,
+          image_url: image_url || null,
+        });
+      }
+      setFormData({ name: "", price: "", stock: "", category: "makanan", image_url: "" });
+      setEditingProduct(null);
       setShowModal(false);
       await refreshData();
-    } catch (err: unknown) {
-      alert("Error: " + (err instanceof Error ? err.message : "Unknown error"));
+    } catch (err: any) {
+      console.error("Save Error Details:", err);
+      const msg = err.message || (err.error_description) || "Unknown error occurred";
+      alert("Error: " + msg);
     } finally {
       setLoading(false);
     }
   };
+
+  const handleEditProduct = (product: Product) => {
+    setEditingProduct(product);
+    setFormData({
+      name: product.name,
+      price: product.price.toString(),
+      stock: product.stock.toString(),
+      category: product.category,
+      image_url: product.image_url || "",
+    });
+    setShowModal(true);
+  };
+
 
   const handleDeleteMenu = async (id: string) => {
     if (confirm("Permanently delete this item?")) {
@@ -236,6 +295,17 @@ export default function Home() {
   // Stats calculations
   const filteredDailyOrders = orders.filter((o) => o.created_at?.startsWith(filterDate));
   const dailyRevenue = filteredDailyOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+
+  // Growth for daily revenue (vs yesterday)
+  const selectedDate = new Date(filterDate);
+  const yesterday = new Date(selectedDate);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().slice(0, 10);
+  const yesterdayRevenue = orders
+    .filter((o) => o.created_at?.startsWith(yesterdayStr))
+    .reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+  const dailyGrowth = yesterdayRevenue > 0 ? ((dailyRevenue - yesterdayRevenue) / yesterdayRevenue * 100).toFixed(1) : null;
+
 
   // Monthly revenue - filtered by month and year
   const selectedMonthStr = `${filterYear}-${String(filterMonth).padStart(2, '0')}`;
@@ -330,48 +400,72 @@ export default function Home() {
                   <p className="text-gray-400 mt-1 font-medium">Select items to process customer orders</p>
                 </div>
                 <div className="flex gap-2">
-                  <span className="px-4 py-2 bg-white rounded-xl border border-gray-100 text-sm font-bold shadow-sm">
-                    All Categories
-                  </span>
+                  {["all", "makanan", "minuman"].map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setPosCategory(cat as any)}
+                      className={`px-4 py-2 rounded-xl text-sm font-bold shadow-sm transition-all border ${posCategory === cat
+                        ? "bg-[#4A3728] text-white border-[#4A3728]"
+                        : "bg-white text-gray-500 border-gray-100 hover:border-[#4A3728]"
+                        }`}
+                    >
+                      {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                    </button>
+                  ))}
                 </div>
               </header>
 
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                {products.map((item) => (
-                  <div
-                    key={item.id}
-                    onClick={() => addToCart(item.id)}
-                    className={`card-premium group p-5 rounded-[32px] cursor-pointer relative ${item.stock <= 0 ? "opacity-40 grayscale pointer-events-none" : ""
-                      }`}
-                  >
-                    <div className="h-44 w-full bg-gray-50 rounded-[24px] mb-5 overflow-hidden border border-gray-100">
-                      {item.image_url ? (
-                        <img
-                          src={item.image_url}
-                          alt={item.name}
-                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-4xl opacity-20">☕</div>
-                      )}
-                    </div>
-                    <div className="flex justify-between items-start mb-1">
-                      <h4 className="font-extrabold text-gray-900 group-hover:text-[#4A3728] transition-colors line-clamp-1">
-                        {item.name}
-                      </h4>
-                      <span className={`text-[10px] font-black uppercase ${item.stock < 5 ? "text-red-500" : "text-gray-400"}`}>
-                        Stock: {item.stock}
-                      </span>
-                    </div>
-                    <p className="text-xl font-black text-[#4A3728]">{formatCurrency(item.price)}</p>
+                {products
+                  .filter((p) => posCategory === "all" || p.category === posCategory)
+                  .map((item) => (
 
-                    <div className="absolute bottom-5 right-5 w-10 h-10 bg-white border border-gray-100 rounded-full flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all">
-                      <svg className="w-5 h-5 text-[#4A3728]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 4v16m8-8H4" />
-                      </svg>
+                    <div
+                      key={item.id}
+                      onClick={() => addToCart(item.id)}
+                      className={`card-premium group p-5 rounded-[32px] cursor-pointer relative ${item.stock <= 0 ? "opacity-40 grayscale pointer-events-none" : ""
+                        }`}
+                    >
+                      <div className="h-44 w-full bg-gray-50 rounded-[24px] mb-5 overflow-hidden border border-gray-100">
+                        {item.image_url ? (
+                          <img
+                            src={item.image_url}
+                            alt={item.name}
+                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-4xl opacity-20">☕</div>
+                        )}
+                      </div>
+                      <div className="flex justify-between items-start mb-1">
+                        <h4 className="font-extrabold text-gray-900 group-hover:text-[#4A3728] transition-colors line-clamp-1">
+                          {item.name}
+                        </h4>
+                        <span className={`text-[10px] font-black uppercase ${item.stock < 5 ? "text-red-500" : "text-gray-400"}`}>
+                          Stock: {item.stock}
+                        </span>
+                      </div>
+                      <p className="text-xl font-black text-[#4A3728]">{formatCurrency(item.price)}</p>
+
+                      <div className="absolute bottom-5 right-5 w-10 h-10 bg-white border border-gray-100 rounded-full flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all">
+                        <svg className="w-5 h-5 text-[#4A3728]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 4v16m8-8H4" />
+                        </svg>
+                      </div>
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditProduct(item);
+                        }}
+                        className="absolute top-5 right-5 w-10 h-10 bg-white/90 backdrop-blur-md border border-gray-100 rounded-full flex items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 -translate-y-2 group-hover:translate-y-0 transition-all hover:bg-[#4A3728] hover:text-white"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                      </button>
                     </div>
-                  </div>
-                ))}
+                  ))}
               </div>
             </div>
 
@@ -513,6 +607,14 @@ export default function Home() {
                         <td className="px-8 py-6 text-center">
                           <div className="flex items-center justify-center gap-2">
                             <button
+                              onClick={() => handleEditProduct(item)}
+                              className="p-2 hover:bg-gray-50 text-gray-300 hover:text-[#4A3728] rounded-xl transition-all"
+                            >
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                              </svg>
+                            </button>
+                            <button
                               onClick={() => handleDeleteMenu(item.id)}
                               className="p-2 hover:bg-red-50 text-gray-300 hover:text-red-500 rounded-xl transition-all"
                             >
@@ -565,10 +667,16 @@ export default function Home() {
                       />
                     </div>
                     <h3 className="text-4xl font-black text-[#4A3728] tracking-tight">{formatCurrency(dailyRevenue)}</h3>
-                    <div className="flex items-center gap-1 mt-3">
-                      <span className="text-[10px] font-medium text-gray-400">Selected date: {new Date(filterDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                    <div className="flex items-center gap-2 mt-3 flex-wrap">
+                      <span className="text-[10px] font-medium text-gray-400">Selected: {new Date(filterDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</span>
+                      {dailyGrowth !== null && (
+                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${Number(dailyGrowth) >= 0 ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                          {Number(dailyGrowth) >= 0 ? '+' : ''}{dailyGrowth}%
+                        </span>
+                      )}
                     </div>
                   </div>
+
                 </div>
 
                 <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group hover:shadow-lg transition-all duration-300">
@@ -640,7 +748,7 @@ export default function Home() {
                       </div>
                       <div>
                         <h4 className="text-lg font-extrabold text-gray-900">Revenue Trends</h4>
-                        <p className="text-xs font-medium text-gray-400">Last 7 days performance</p>
+                        <p className="text-xs font-medium text-gray-400">Monthly performance trend</p>
                       </div>
                     </div>
                   </div>
@@ -656,11 +764,13 @@ export default function Home() {
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
                         <XAxis
                           dataKey="day"
-                          tick={{ fontSize: 11, fontWeight: "600", fill: "#9CA3AF" }}
+                          tick={{ fontSize: 10, fontWeight: "600", fill: "#9CA3AF" }}
                           axisLine={false}
                           tickLine={false}
                           dy={10}
+                          interval={4}
                         />
+
                         <YAxis
                           tick={{ fontSize: 11, fontWeight: "600", fill: "#9CA3AF" }}
                           tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`}
@@ -741,9 +851,10 @@ export default function Home() {
         <div className="fixed inset-0 bg-[#4A3728]/40 backdrop-blur-md flex items-center justify-center z-[100]">
           <div className="bg-white w-[500px] rounded-[40px] p-10 shadow-2xl animate-scaleIn">
             <div className="mb-8">
-              <h3 className="text-2xl font-black text-gray-900">New Product</h3>
-              <p className="text-gray-400 font-medium">Enter details for the new menu item</p>
+              <h3 className="text-2xl font-black text-gray-900">{editingProduct ? 'Edit Product' : 'New Product'}</h3>
+              <p className="text-gray-400 font-medium">{editingProduct ? 'Update product details and stock' : 'Enter details for the new menu item'}</p>
             </div>
+
 
             <div className="space-y-6">
               <div className="space-y-2">
@@ -781,6 +892,24 @@ export default function Home() {
               </div>
 
               <div className="space-y-2">
+                <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest ml-1">Category</label>
+                <div className="grid grid-cols-2 gap-4">
+                  {["makanan", "minuman"].map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setFormData({ ...formData, category: cat })}
+                      className={`py-4 rounded-2xl font-bold text-sm border transition-all ${formData.category === cat
+                        ? "bg-[#4A3728] text-white border-[#4A3728]"
+                        : "bg-gray-50 text-gray-400 border-gray-100 hover:border-gray-300"
+                        }`}
+                    >
+                      {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
                 <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest ml-1">Cover Image URL</label>
                 <input
                   type="text"
@@ -794,7 +923,11 @@ export default function Home() {
 
             <div className="flex gap-4 mt-10">
               <button
-                onClick={() => setShowModal(false)}
+                onClick={() => {
+                  setShowModal(false);
+                  setEditingProduct(null);
+                  setFormData({ name: "", price: "", stock: "", category: "makanan", image_url: "" });
+                }}
                 className="flex-1 py-4 text-gray-400 font-bold hover:bg-gray-50 rounded-2xl transition-all"
               >
                 Cancel
@@ -804,8 +937,9 @@ export default function Home() {
                 disabled={loading}
                 className="flex-[2] px-10 py-4 bg-[#4A3728] text-white font-bold rounded-2xl shadow-xl shadow-amber-950/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50"
               >
-                {loading ? "Adding..." : "Add Item"}
+                {loading ? "Saving..." : (editingProduct ? "Update Item" : "Add Item")}
               </button>
+
             </div>
           </div>
         </div>
