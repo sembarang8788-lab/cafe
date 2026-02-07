@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cak Yusop - Premium Management System</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --primary: #4A3728;
+            --primary-light: #FDF8F3;
+            --accent: #D97706;
+            --bg-main: #F9FAFB;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: var(--bg-main);
+            color: #1F2937;
+        }
+
+        /* Sidebar Styling */
+        .sidebar-link {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+
+        .sidebar-link.active {
+            background-color: var(--primary);
+            color: white;
+            box-shadow: 0 10px 15px -3px rgba(74, 55, 40, 0.2);
+        }
+
+        .sidebar-link:not(.active):hover {
+            background-color: var(--primary-light);
+            color: var(--primary);
+            transform: translateX(4px);
+        }
+
+        /* Glassmorphism & Cards */
+        .card-premium {
+            background: white;
+            border: 1px solid rgba(229, 231, 235, 0.5);
+            transition: all 0.3s ease;
+        }
+
+        .card-premium:hover {
+            border-color: var(--primary);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.05);
+        }
+
+        /* Custom Scrollbar */
+        .custom-scroll::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        .custom-scroll::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background: #E5E7EB;
+            border-radius: 10px;
+        }
+
+        .custom-scroll::-webkit-scrollbar-thumb:hover {
+            background: #D1D5DB;
+        }
+
+        /* Table Design */
+        .table-container {
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02);
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        section {
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        /* Inputs */
+        input:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(74, 55, 40, 0.1);
+        }
+    </style>
+</head>
+
+<body class="flex h-screen overflow-hidden">
+
+    <!-- Sidebar -->
+    <aside class="w-72 bg-white border-r border-gray-100 flex flex-col z-20">
+        <div class="p-8">
+            <h1 class="text-2xl font-extrabold text-[#4A3728] tracking-tight flex items-center gap-3">
+                <span class="p-2 bg-[#4A3728] text-white rounded-lg shadow-inner">☕</span>
+                Cak Yusop
+            </h1>
+            <div class="mt-2 flex items-center gap-2">
+                <span class="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
+                <span class="text-[10px] font-bold tracking-widest text-gray-400 uppercase">Premium Management</span>
+            </div>
+        </div>
+
+        <nav class="flex-1 px-6 space-y-2 mt-4">
+            <button onclick="nav('pos')" id="nav-pos"
+                class="sidebar-link active w-full flex items-center gap-4 px-5 py-3.5 rounded-2xl font-semibold text-gray-500">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                </svg>
+                Point of Sale
+            </button>
+            <button onclick="nav('inventory')" id="nav-inventory"
+                class="sidebar-link w-full flex items-center gap-4 px-5 py-3.5 rounded-2xl font-semibold text-gray-500">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 11m8 4V4.5" />
+                </svg>
+                Inventory
+            </button>
+            <button onclick="nav('report')" id="nav-report"
+                class="sidebar-link w-full flex items-center gap-4 px-5 py-3.5 rounded-2xl font-semibold text-gray-500">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                Analytics
+            </button>
+        </nav>
+
+        <div class="p-6">
+            <div class="bg-gray-50 rounded-2xl p-5 border border-gray-100">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">System Health</span>
+                    <div id="db-status-dot" class="w-2 h-2 rounded-full bg-green-500"></div>
+                </div>
+                <p id="db-status" class="text-xs font-bold text-gray-700">Service Operational</p>
+                <div class="mt-4 pt-4 border-t border-gray-200">
+                    <p class="text-[10px] text-gray-400 font-medium">V 2.1.0 • Cak Yusop POS</p>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col bg-[#F9FAFB] overflow-hidden relative">
+
+        <!-- View: POS (Kasir) -->
+        <section id="view-pos" class="flex-1 flex overflow-hidden">
+            <div class="flex-1 p-10 overflow-y-auto custom-scroll">
+                <header class="mb-10 flex justify-between items-end">
+                    <div>
+                        <h2 class="text-3xl font-extrabold text-gray-900 tracking-tight">Main Menu</h2>
+                        <p class="text-gray-400 mt-1 font-medium">Select items to process customer orders</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <span
+                            class="px-4 py-2 bg-white rounded-xl border border-gray-100 text-sm font-bold shadow-sm">All
+                            Categories</span>
+                    </div>
+                </header>
+
+                <div id="pos-menu-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    <!-- Dinamis via JS -->
+                </div>
+            </div>
+
+            <!-- Cart Sidebar -->
+            <div class="w-[420px] bg-white border-l border-gray-100 flex flex-col shadow-2xl z-10">
+                <div class="p-8 flex-1 flex flex-col overflow-hidden">
+                    <div class="flex items-center justify-between mb-8">
+                        <h3 class="text-xl font-extrabold text-gray-900">Current Order</h3>
+                        <span id="cart-count"
+                            class="bg-[#4A3728] text-white text-[10px] font-bold px-2 py-1 rounded-md">0 ITEMS</span>
+                    </div>
+
+                    <div id="cart-items" class="flex-1 overflow-y-auto custom-scroll space-y-4 pr-2">
+                        <!-- Item Keranjang -->
+                    </div>
+                </div>
+
+                <div class="p-8 bg-gray-50/50 border-t border-gray-100">
+                    <div class="space-y-3 mb-8">
+                        <div class="flex justify-between text-gray-400 font-medium">
+                            <span>Order Subtotal</span>
+                            <span id="subtotal" class="text-gray-900 font-bold">Rp 0</span>
+                        </div>
+                        <div class="flex justify-between items-center pt-3 border-t border-gray-100">
+                            <span class="text-gray-900 font-extrabold text-lg">Grand Total</span>
+                            <span id="grand-total" class="text-2xl font-black text-[#4A3728]">Rp 0</span>
+                        </div>
+                    </div>
+
+                    <button onclick="checkout()"
+                        class="w-full bg-[#4A3728] text-white py-5 rounded-2xl font-bold text-lg hover:bg-black transition-all shadow-xl shadow-amber-950/20 active:scale-[0.98]">
+                        Complete Transaction
+                    </button>
+                    <button onclick="clearCart()"
+                        class="w-full mt-4 py-2 text-gray-400 text-xs font-bold hover:text-red-500 uppercase tracking-widest transition-colors">
+                        Discard All Items
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- View: Inventory (Stok) -->
+        <section id="view-inventory" class="hidden flex-1 p-10 overflow-y-auto custom-scroll">
+            <div class="max-w-6xl mx-auto">
+                <div class="flex justify-between items-center mb-10">
+                    <div>
+                        <h2 class="text-3xl font-extrabold text-gray-900 tracking-tight">Stock Inventory</h2>
+                        <p class="text-gray-400 font-medium">Manage your menu offerings and stock levels</p>
+                    </div>
+                    <button onclick="openModal('addMenuModal')"
+                        class="bg-[#4A3728] text-white px-8 py-4 rounded-2xl font-bold shadow-lg shadow-amber-950/20 hover:bg-black transition-all flex items-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                        </svg>
+                        Add New Item
+                    </button>
+                </div>
+
+                <div class="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden">
+                    <table class="w-full text-left">
+                        <thead>
+                            <tr class="bg-gray-50/50 border-b border-gray-100">
+                                <th class="px-8 py-5 text-[11px] font-black text-gray-400 uppercase tracking-widest">
+                                    Menu Details</th>
+                                <th
+                                    class="px-8 py-5 text-[11px] font-black text-gray-400 uppercase tracking-widest text-right">
+                                    Unit Price</th>
+                                <th
+                                    class="px-8 py-5 text-[11px] font-black text-gray-400 uppercase tracking-widest text-center">
+                                    Status</th>
+                                <th
+                                    class="px-8 py-5 text-[11px] font-black text-gray-400 uppercase tracking-widest text-center">
+                                    Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inventory-table-body" class="divide-y divide-gray-50">
+                            <!-- Dinamis -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- View: Report (Laporan) -->
+        <section id="view-report" class="hidden flex-1 p-10 overflow-y-auto custom-scroll">
+            <div class="max-w-6xl mx-auto">
+                <header class="mb-10">
+                    <h2 class="text-3xl font-extrabold text-gray-900 tracking-tight">Analytics Dashboard</h2>
+                    <p class="text-gray-400 font-medium">Real-time performance metrics</p>
+                </header>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">
+                    <div
+                        class="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group">
+                        <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
+                            <svg class="w-16 h-16 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path
+                                    d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
+                            </svg>
+                        </div>
+                        <p class="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Today's Revenue
+                        </p>
+                        <h3 id="stat-daily-revenue" class="text-3xl font-black text-green-600">Rp 0</h3>
+                        <p class="text-xs text-gray-400 mt-2 font-medium">Across all transactions</p>
+                    </div>
+                    <div
+                        class="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group">
+                        <p class="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Total Orders</p>
+                        <h3 id="stat-total-tx" class="text-3xl font-black text-[#4A3728]">0</h3>
+                        <p class="text-xs text-gray-400 mt-2 font-medium">Daily count</p>
+                    </div>
+                    <div
+                        class="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group">
+                        <p class="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Month to Date</p>
+                        <h3 id="stat-monthly-revenue" class="text-3xl font-black text-blue-600">Rp 0</h3>
+                        <p class="text-xs text-gray-400 mt-2 font-medium">Cumulative growth</p>
+                    </div>
+                </div>
+
+                <div class="bg-white p-10 rounded-[40px] border border-gray-100 shadow-sm">
+                    <div class="flex justify-between items-center mb-10">
+                        <h4 class="text-xl font-extrabold text-gray-900">Revenue Trends</h4>
+                        <select
+                            class="bg-gray-50 border-none rounded-xl px-4 py-2 text-xs font-bold text-gray-500 focus:ring-0">
+                            <option>Last 7 Days</option>
+                            <option>Last 30 Days</option>
+                        </select>
+                    </div>
+                    <div class="h-80">
+                        <canvas id="revenueChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Modal: Add Menu -->
+    <div id="addMenuModal"
+        class="hidden fixed inset-0 bg-[#4A3728]/40 backdrop-blur-md flex items-center justify-center z-[100]">
+        <div class="bg-white w-[500px] rounded-[40px] p-10 shadow-2xl scale-in-center">
+            <div class="mb-8">
+                <h3 class="text-2xl font-black text-gray-900">New Product</h3>
+                <p class="text-gray-400 font-medium">Enter details for the new menu item</p>
+            </div>
+
+            <div class="space-y-6">
+                <div class="space-y-2">
+                    <label class="text-[11px] font-black text-gray-400 uppercase tracking-widest ml-1">Product
+                        Title</label>
+                    <input type="text" id="m-name" placeholder="e.g. Signature Arabica Blend"
+                        class="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl font-semibold text-gray-800 placeholder:text-gray-300">
+                </div>
+
+                <div class="grid grid-cols-2 gap-6">
+                    <div class="space-y-2">
+                        <label class="text-[11px] font-black text-gray-400 uppercase tracking-widest ml-1">Price
+                            (IDR)</label>
+                        <input type="number" id="m-price" placeholder="0"
+                            class="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-[#4A3728]">
+                    </div>
+                    <div class="space-y-2">
+                        <label class="text-[11px] font-black text-gray-400 uppercase tracking-widest ml-1">Initial
+                            Stock</label>
+                        <input type="number" id="m-stock" placeholder="10"
+                            class="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800">
+                    </div>
+                </div>
+
+                <div class="space-y-2">
+                    <label class="text-[11px] font-black text-gray-400 uppercase tracking-widest ml-1">Cover Image
+                        URL</label>
+                    <input type="text" id="m-image" placeholder="https://images.unsplash.com/..."
+                        class="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl font-medium text-xs text-gray-500">
+                </div>
+            </div>
+
+            <div class="flex gap-4 mt-10">
+                <button onclick="closeModal('addMenuModal')"
+                    class="flex-1 py-4 text-gray-400 font-bold hover:bg-gray-50 rounded-2xl transition-all">Cancel</button>
+                <button onclick="saveMenu()"
+                    class="flex-2 px-10 py-4 bg-[#4A3728] text-white font-bold rounded-2xl shadow-xl shadow-amber-950/20 hover:scale-[1.02] active:scale-[0.98] transition-all">
+                    Add Item
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Backend API URL
+        const API_URL = 'http://localhost:3001/api';
+
+        let menuItems = [];
+        let cart = [];
+        let orders = [];
+        let revenueChart = null;
+
+        window.onload = async () => {
+            await refreshData();
+            initChart();
+            renderPOS();
+        };
+
+        async function refreshData() {
+            try {
+                const productsRes = await fetch(`${API_URL}/products`);
+                const productsData = await productsRes.json();
+
+                const ordersRes = await fetch(`${API_URL}/orders`);
+                const ordersData = await ordersRes.json();
+
+                menuItems = productsData.data || [];
+                orders = ordersData.data || [];
+
+                updateStats();
+                renderInventory();
+                renderPOS();
+                updateChartData();
+
+                document.getElementById('db-status').textContent = "Service Operational";
+                document.getElementById('db-status-dot').className = "w-2 h-2 rounded-full bg-green-500";
+            } catch (err) {
+                console.error("DB Error:", err);
+                document.getElementById('db-status').textContent = "System Offline";
+                document.getElementById('db-status-dot').className = "w-2 h-2 rounded-full bg-red-500 animate-ping";
+            }
+        }
+
+        function nav(target) {
+            document.querySelectorAll('section').forEach(s => s.classList.add('hidden'));
+            document.querySelectorAll('.sidebar-link').forEach(l => l.classList.remove('active'));
+            document.getElementById(`view-${target}`).classList.remove('hidden');
+            document.getElementById(`nav-${target}`).classList.add('active');
+        }
+
+        function renderPOS() {
+            const grid = document.getElementById('pos-menu-grid');
+            grid.innerHTML = menuItems.map(item => `
+                <div onclick="addToCart('${item.id}')" class="card-premium group p-5 rounded-[32px] cursor-pointer relative ${item.stock <= 0 ? 'opacity-40 grayscale pointer-events-none' : ''}">
+                    <div class="h-44 w-full bg-gray-50 rounded-[24px] mb-5 overflow-hidden border border-gray-100">
+                         ${item.image_url ?
+                    `<img src="${item.image_url}" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700">` :
+                    `<div class="w-full h-full flex items-center justify-center text-4xl opacity-20">☕</div>`}
+                    </div>
+                    <div class="flex justify-between items-start mb-1">
+                        <h4 class="font-extrabold text-gray-900 group-hover:text-[#4A3728] transition-colors line-clamp-1">${item.name}</h4>
+                        <span class="text-[10px] font-black ${item.stock < 5 ? 'text-red-500' : 'text-gray-400'} uppercase">Stock: ${item.stock}</span>
+                    </div>
+                    <p class="text-xl font-black text-[#4A3728]">Rp ${Number(item.price).toLocaleString()}</p>
+                    
+                    <div class="absolute bottom-5 right-5 w-10 h-10 bg-white border border-gray-100 rounded-full flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all">
+                        <svg class="w-5 h-5 text-[#4A3728]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 4v16m8-8H4"/></svg>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderCart() {
+            const container = document.getElementById('cart-items');
+            const cartCount = document.getElementById('cart-count');
+
+            cartCount.textContent = `${cart.reduce((s, i) => s + i.qty, 0)} ITEMS`;
+
+            if (cart.length === 0) {
+                container.innerHTML = `
+                <div class="h-full flex flex-col items-center justify-center text-center py-20 opacity-30">
+                    <div class="text-6xl mb-4">🛒</div>
+                    <p class="font-bold text-sm tracking-widest uppercase">Cart is Empty</p>
+                </div>`;
+            } else {
+                container.innerHTML = cart.map((item) => `
+                    <div class="flex items-center gap-4 bg-gray-50/80 p-4 rounded-2xl border border-gray-100 group">
+                        <div class="w-12 h-12 rounded-xl bg-white flex-shrink-0 flex items-center justify-center font-bold text-[#4A3728] shadow-sm border border-gray-100">
+                            ${item.qty}x
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="font-bold text-gray-900 truncate">${item.name}</p>
+                            <p class="text-xs font-bold text-gray-400">Rp ${item.price.toLocaleString()}</p>
+                        </div>
+                        <div class="flex items-center gap-1 bg-white p-1 rounded-xl shadow-inner border border-gray-100">
+                            <button onclick="updateQty('${item.id}', -1)" class="w-8 h-8 flex items-center justify-center hover:bg-red-50 hover:text-red-500 rounded-lg transition-colors font-bold">-</button>
+                            <button onclick="updateQty('${item.id}', 1)" class="w-8 h-8 flex items-center justify-center hover:bg-green-50 hover:text-green-500 rounded-lg transition-colors font-bold">+</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+            updateTotals();
+        }
+
+        function addToCart(id) {
+            const menu = menuItems.find(m => m.id === id);
+            const existing = cart.find(c => c.id === id);
+            if (existing) {
+                if (existing.qty >= menu.stock) return;
+                existing.qty++;
+            } else {
+                cart.push({ ...menu, qty: 1 });
+            }
+            renderCart();
+        }
+
+        function updateQty(id, delta) {
+            const item = cart.find(c => c.id === id);
+            const menu = menuItems.find(m => m.id === id);
+            item.qty += delta;
+            if (delta > 0 && item.qty > menu.stock) item.qty = menu.stock;
+            if (item.qty <= 0) cart = cart.filter(c => c.id !== id);
+            renderCart();
+        }
+
+        function updateTotals() {
+            const total = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
+            document.getElementById('subtotal').textContent = `Rp ${total.toLocaleString()}`;
+            document.getElementById('grand-total').textContent = `Rp ${total.toLocaleString()}`;
+        }
+
+        async function checkout() {
+            if (cart.length === 0) return;
+            const total_amount = cart.reduce((sum, i) => sum + (Number(i.price) * i.qty), 0);
+            const items = cart.map(item => ({ product_id: item.id, quantity: item.qty, price: Number(item.price) }));
+
+            try {
+                const res = await fetch(`${API_URL}/orders`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ items, total_amount })
+                });
+
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message);
+
+                cart = [];
+                renderCart();
+                await refreshData();
+                alert("Transaction Completed Successfully!");
+            } catch (err) {
+                alert("Error: " + err.message);
+            }
+        }
+
+        function clearCart() { cart = []; renderCart(); }
+
+        function renderInventory() {
+            const tbody = document.getElementById('inventory-table-body');
+            tbody.innerHTML = menuItems.map(item => `
+                <tr class="hover:bg-gray-50/50 transition-colors">
+                    <td class="px-8 py-6">
+                        <div class="flex items-center gap-4">
+                            <div class="w-14 h-14 rounded-2xl bg-gray-50 border border-gray-100 overflow-hidden flex-shrink-0">
+                                ${item.image_url ? `<img src="${item.image_url}" class="w-full h-full object-cover">` : `<div class="w-full h-full flex items-center justify-center opacity-20 text-xl">☕</div>`}
+                            </div>
+                            <div>
+                                <p class="font-black text-gray-900">${item.name}</p>
+                                <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest">ID: ${String(item.id).slice(0, 8)}</p>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="px-8 py-6 text-right font-black text-[#4A3728] text-lg">Rp ${Number(item.price).toLocaleString()}</td>
+                    <td class="px-8 py-6 text-center">
+                        <span class="px-4 py-1.5 rounded-full text-[10px] font-black uppercase ${item.stock < 10 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}">
+                            ${item.stock} Unit In Stock
+                        </span>
+                    </td>
+                    <td class="px-8 py-6 text-center">
+                        <div class="flex items-center justify-center gap-2">
+                            <button onclick="deleteMenu('${item.id}')" class="p-2 hover:bg-red-50 text-gray-300 hover:text-red-500 rounded-xl transition-all">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        async function saveMenu() {
+            const payload = {
+                name: document.getElementById('m-name').value,
+                price: parseFloat(document.getElementById('m-price').value),
+                stock: parseInt(document.getElementById('m-stock').value) || 0,
+                image_url: document.getElementById('m-image').value || null
+            };
+
+            if (!payload.name || !payload.price) return alert('Fill required fields!');
+
+            try {
+                const res = await fetch(`${API_URL}/products`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message);
+
+                document.getElementById('m-name').value = '';
+                document.getElementById('m-price').value = '';
+                document.getElementById('m-stock').value = '';
+                document.getElementById('m-image').value = '';
+                closeModal('addMenuModal');
+                await refreshData();
+            } catch (err) {
+                alert("Error: " + err.message);
+            }
+        }
+
+        async function deleteMenu(id) {
+            if (!confirm("Permanently delete this item?")) return;
+
+            try {
+                const res = await fetch(`${API_URL}/products/${id}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message);
+
+                await refreshData();
+            } catch (err) {
+                alert("Error: " + err.message);
+            }
+        }
+
+        function updateStats() {
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const todayOrders = orders.filter(o => o.created_at && o.created_at.startsWith(todayStr));
+            const dailyRevenue = todayOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+            const monthlyRevenue = orders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+            document.getElementById('stat-daily-revenue').textContent = `Rp ${dailyRevenue.toLocaleString()}`;
+            document.getElementById('stat-total-tx').textContent = todayOrders.length;
+            document.getElementById('stat-monthly-revenue').textContent = `Rp ${monthlyRevenue.toLocaleString()}`;
+        }
+
+        function initChart() {
+            const ctx = document.getElementById('revenueChart').getContext('2d');
+            revenueChart = new Chart(ctx, {
+                type: 'line',
+                data: { labels: [], datasets: [{ label: 'Omset', data: [], borderColor: '#4A3728', backgroundColor: 'rgba(74, 55, 40, 0.05)', fill: true, tension: 0.4, borderWidth: 4, pointRadius: 0, pointHoverRadius: 6 }] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { grid: { borderDash: [5, 5], color: '#F3F4F6' }, ticks: { font: { weight: 'bold', size: 10 } } },
+                        x: { grid: { display: false }, ticks: { font: { weight: 'bold', size: 10 } } }
+                    }
+                }
+            });
+        }
+
+        function updateChartData() {
+            if (!revenueChart) return;
+            const labels = [];
+            const data = [];
+            for (let i = 6; i >= 0; i--) {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                const dateStr = d.toISOString().slice(0, 10);
+                labels.push(d.toLocaleDateString('id-ID', { weekday: 'short' }));
+                const sum = orders.filter(o => o.created_at && o.created_at.startsWith(dateStr)).reduce((s, o) => s + Number(o.total_amount || 0), 0);
+                data.push(sum);
+            }
+            revenueChart.data.labels = labels;
+            revenueChart.data.datasets[0].data = data;
+            revenueChart.update();
+        }
+
+        function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+        function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+    </script>
+</body>
+
+</html>
